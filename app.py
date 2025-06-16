@@ -1,104 +1,172 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import uvicorn
+import os
+import uuid
+from typing import Optional, Dict, Any
+import json
+from datetime import datetime
 
-const RENDER_API_URL = "https://agentflow-video-service.onrender.com";
-// Используем переменную окружения для API ключа
-const API_KEY = Deno.env.get("VIDEO_API_KEY") || "xgSmPQwDwE0nQ9mHfOX9hB37fTSQ7FOGb93UJ1v5PXg";
+app = FastAPI(
+    title="AgentFlow Video Highlight API",
+    description="API для анализа видео и создания хайлайтов",
+    version="1.0.0"
+)
 
-console.log("Video API Proxy Function started");
+# Настройка CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # В продакшене укажите конкретные домены
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-serve(async (req) => {
-  try {
-    // Добавляем CORS заголовки для всех запросов
-    const corsHeaders = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    };
+# Хранилище задач (в продакшене используйте базу данных)
+tasks_storage: Dict[str, Dict[str, Any]] = {}
 
-    // Обрабатываем preflight OPTIONS запросы
-    if (req.method === "OPTIONS") {
-      return new Response(null, {
-        status: 200,
-        headers: corsHeaders,
-      });
+# Добавляем эндпоинт для проверки здоровья
+@app.get("/health")
+def health_check():
+    """Проверка работоспособности сервиса"""
+    return {
+        "status": "ok",
+        "service": "video-highlight-api",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat()
     }
 
-    // Получаем путь из URL запроса
-    const url = new URL(req.url);
-    let path = url.pathname.replace(/^\/video-api-proxy/, "");
-    
-    console.log(`Received request: ${req.method} ${path}`);
-    
-    // Специальная обработка для /health
-    if (path === "/health" || path === "") {
-      return new Response(JSON.stringify({
-        status: "ok",
-        service: "video-api-proxy",
-        target: RENDER_API_URL,
-        timestamp: new Date().toISOString()
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          ...corsHeaders
+@app.get("/")
+def root():
+    """Корневой эндпоинт"""
+    return {
+        "message": "AgentFlow Video Highlight API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+@app.post("/api/videos/analyze")
+async def analyze_video(
+    background_tasks: BackgroundTasks,
+    video_file: UploadFile = File(...),
+    duration: Optional[int] = Form(30),
+    style: Optional[str] = Form("dynamic")
+):
+    """
+    Анализ видео и создание хайлайтов
+    """
+    try:
+        # Генерируем уникальный ID задачи
+        task_id = str(uuid.uuid4())
+        
+        # Проверяем тип файла
+        if not video_file.content_type or not video_file.content_type.startswith('video/'):
+            raise HTTPException(status_code=400, detail="Файл должен быть видео")
+        
+        # Сохраняем информацию о задаче
+        tasks_storage[task_id] = {
+            "id": task_id,
+            "status": "processing",
+            "filename": video_file.filename,
+            "duration": duration,
+            "style": style,
+            "created_at": datetime.now().isoformat(),
+            "progress": 0
         }
-      });
-    }
+        
+        # Запускаем обработку в фоне
+        background_tasks.add_task(process_video, task_id, video_file, duration, style)
+        
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "message": "Видео принято в обработку"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка при обработке видео: {str(e)}")
+
+@app.get("/api/tasks/{task_id}")
+def get_task_status(task_id: str):
+    """
+    Получение статуса задачи
+    """
+    if task_id not in tasks_storage:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     
-    // Формируем URL для проксирования
-    const targetUrl = `${RENDER_API_URL}${path}`;
-    console.log(`Proxying ${req.method} request to: ${targetUrl}`);
+    return tasks_storage[task_id]
+
+@app.get("/api/videos/{task_id}/highlights")
+def get_video_highlights(task_id: str):
+    """
+    Получение результатов анализа видео
+    """
+    if task_id not in tasks_storage:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
     
-    // Копируем заголовки и добавляем авторизацию
-    const headers = new Headers();
+    task = tasks_storage[task_id]
     
-    // Копируем важные заголовки из оригинального запроса
-    if (req.headers.get("content-type")) {
-      headers.set("Content-Type", req.headers.get("content-type")!);
-    }
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Обработка видео еще не завершена")
     
-    // Добавляем авторизацию для API
-    headers.set("Authorization", `Bearer ${API_KEY}`);
-    
-    console.log("Request headers:", Object.fromEntries([...headers.entries()]));
-    
-    // Проксируем запрос
-    const response = await fetch(targetUrl, {
-      method: req.method,
-      headers,
-      body: req.body,
-    });
-    
-    console.log(`Response status: ${response.status}`);
-    
-    // Получаем тело ответа
-    const responseBody = await response.text();
-    
-    // Возвращаем ответ с CORS заголовками
-    return new Response(responseBody, {
-      status: response.status,
-      headers: {
-        "Content-Type": response.headers.get("Content-Type") || "application/json",
-        ...corsHeaders
-      },
-    });
-    
-  } catch (error) {
-    console.error("Error in video-api-proxy:", error);
-    
-    return new Response(JSON.stringify({ 
-      error: error.message,
-      stack: error.stack,
-      timestamp: new Date().toISOString()
-    }), {
-      status: 500,
-      headers: { 
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      }
-    });
-  }
-});
+    return task.get("results", {})
+
+async def process_video(task_id: str, video_file: UploadFile, duration: int, style: str):
+    """
+    Фоновая обработка видео (заглушка)
+    """
+    try:
+        # Обновляем прогресс
+        tasks_storage[task_id]["progress"] = 25
+        
+        # Имитируем обработку видео
+        import asyncio
+        await asyncio.sleep(2)
+        
+        tasks_storage[task_id]["progress"] = 50
+        await asyncio.sleep(2)
+        
+        tasks_storage[task_id]["progress"] = 75
+        await asyncio.sleep(2)
+        
+        # Завершаем обработку
+        tasks_storage[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "completed_at": datetime.now().isoformat(),
+            "results": {
+                "highlights": [
+                    {
+                        "id": "highlight_1",
+                        "start_time": 10.5,
+                        "end_time": 25.3,
+                        "description": "Интересный момент в видео",
+                        "score": 0.85
+                    },
+                    {
+                        "id": "highlight_2", 
+                        "start_time": 45.2,
+                        "end_time": 62.1,
+                        "description": "Ключевая сцена",
+                        "score": 0.92
+                    }
+                ],
+                "summary": f"Создано 2 хайлайта длительностью {duration} секунд в стиле {style}",
+                "total_highlights": 2,
+                "processing_time": "6 секунд"
+            }
+        })
+        
+    except Exception as e:
+        tasks_storage[task_id].update({
+            "status": "failed",
+            "error": str(e),
+            "failed_at": datetime.now().isoformat()
+        })
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
