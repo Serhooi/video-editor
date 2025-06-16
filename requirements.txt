@@ -9,3 +9,5 @@ numpy==1.24.3
 pydantic==2.3.0
 python-jose==3.3.0
 redis==4.6.0
+opencv-python==4.8.0.76
+whisper==1.1.10
