@@ -1,37 +1,58 @@
+# AgentFlow Video Platform v7.0 - Полные зависимости
 # Основные зависимости FastAPI
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
 python-multipart==0.0.6
 
+# OpenAI API (новая версия v1.x)
+openai==1.3.7
+
 # Обработка видео и аудио
 moviepy==1.0.3
 ffmpeg-python==0.2.0
 opencv-python==4.8.1.78
+
+# Обработка изображений
 Pillow>=9.0.1,<10.1.0
 
-# AI и машинное обучение
-openai==1.3.7
-whisper==1.1.10
-
-# Обработка аудио
+# Обработка аудио и речи
 librosa==0.10.1
 soundfile==0.12.1
 pydub==0.25.1
+SpeechRecognition==3.10.0
 
-# Работа с изображениями
-scikit-image==0.21.0
-imageio==2.31.5
-
-# Утилиты
+# Научные вычисления
 numpy==1.24.3
 scipy==1.11.4
+
+# HTTP запросы
 requests==2.31.0
+
+# Асинхронная работа с файлами
 aiofiles==23.2.0
 
 # Логирование
 loguru==0.7.2
 
-# Дополнительно для обработки видео
+# Работа с путями
 pathlib2==2.3.7
-ffmpeg-python==0.2.0
+
+# Дополнительные утилиты
+python-dateutil==2.8.2
+typing-extensions==4.8.0
+
+# Для работы с JSON
+ujson==5.8.0
+
+# Дополнительные кодеки для аудио
+audioread==3.0.1
+
+# Для обработки различных форматов аудио
+mutagen==1.47.0
+
+# Математические операции
+scikit-learn==1.3.2
+
+# Для работы с конфигурацией
+python-dotenv==1.0.0
