@@ -1,11 +1,11 @@
 """
-AgentFlow AI Clips v11.1 - ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ RENDER
-Полноценная автоматическая нарезка видео с совместимыми зависимостями
+AgentFlow AI Clips v11.2 - ИСПРАВЛЕНА СОВМЕСТИМОСТЬ С OpenAI 1.3.0
+Полноценная автоматическая нарезка видео с совместимой транскрибацией
 
-ИСПРАВЛЕНИЯ v11.1:
-- Фиксированная версия OpenAI 1.3.0 для совместимости с Render
-- Упрощенные зависимости без конфликтов
-- Улучшенная обработка ошибок
+ИСПРАВЛЕНИЯ v11.2:
+- Убран параметр timestamp_granularities (не поддерживается в OpenAI 1.3.0)
+- Упрощенная транскрибация с базовыми временными метками
+- Улучшенная обработка результатов Whisper API
 - Fallback методы для всех операций
 """
 
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="11.1.0")
+app = FastAPI(title="AgentFlow AI Clips", version="11.2.0")
 
 # CORS
 app.add_middleware(
@@ -97,7 +97,7 @@ def check_dependencies():
 @app.on_event("startup")
 async def startup_event():
     """Проверка зависимостей при запуске"""
-    logger.info("🚀 Starting AgentFlow AI Clips v11.1")
+    logger.info("🚀 Starting AgentFlow AI Clips v11.2")
     deps = check_dependencies()
     logger.info(f"Dependencies check: {deps}")
 
@@ -106,12 +106,12 @@ async def root():
     deps = check_dependencies()
     return {
         "service": "AgentFlow AI Clips",
-        "version": "11.1.0",
-        "description": "Automatic video clipping with Render.com compatibility",
+        "version": "11.2.0",
+        "description": "Automatic video clipping with OpenAI 1.3.0 compatibility",
         "dependencies": deps,
         "features": [
             "1. Upload video",
-            "2. Whisper AI transcription", 
+            "2. Whisper AI transcription (compatible mode)", 
             "3. ChatGPT analysis of best moments",
             "4. Automatic video cutting with fallback methods",
             "5. Professional subtitle overlay",
@@ -124,7 +124,7 @@ async def health_check():
     deps = check_dependencies()
     return {
         "status": "healthy",
-        "version": "11.1.0",
+        "version": "11.2.0",
         "dependencies": deps,
         "features": {
             "whisper_transcription": deps["openai"],
@@ -179,7 +179,7 @@ def extract_audio_with_moviepy(video_path: str, audio_path: str) -> bool:
         return False
 
 async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
-    """Полная транскрибация видео с временными метками"""
+    """Полная транскрибация видео с временными метками (совместимо с OpenAI 1.3.0)"""
     if not client:
         raise Exception("OpenAI client not available")
         
@@ -187,18 +187,20 @@ async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
         logger.info(f"Starting transcription: {audio_path}")
         
         with open(audio_path, "rb") as audio_file:
+            # Используем только поддерживаемые параметры для OpenAI 1.3.0
             transcription = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 language=language,
-                response_format="verbose_json",
-                timestamp_granularities=["word", "segment"]
+                response_format="verbose_json"
+                # Убираем timestamp_granularities - не поддерживается в 1.3.0
             )
         
-        # Обработка результата
+        # Обработка результата для OpenAI 1.3.0
         segments = []
         words = []
         
+        # Проверяем наличие segments
         if hasattr(transcription, 'segments') and transcription.segments:
             for segment in transcription.segments:
                 if hasattr(segment, 'start'):
@@ -209,24 +211,37 @@ async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
                     })
                 elif isinstance(segment, dict):
                     segments.append({
-                        "start": segment['start'],
-                        "end": segment['end'],
-                        "text": segment['text'].strip()
+                        "start": segment.get('start', 0),
+                        "end": segment.get('end', 0),
+                        "text": segment.get('text', '').strip()
                     })
         
-        if hasattr(transcription, 'words') and transcription.words:
-            for word in transcription.words:
-                if hasattr(word, 'start'):
-                    words.append({
-                        "word": word.word.strip(),
-                        "start": word.start,
-                        "end": word.end
+        # Если нет segments, создаем базовые из полного текста
+        if not segments and hasattr(transcription, 'text'):
+            # Разбиваем текст на предложения и создаем примерные временные метки
+            full_text = transcription.text
+            sentences = full_text.split('. ')
+            duration_per_sentence = 5.0  # Примерно 5 секунд на предложение
+            
+            for i, sentence in enumerate(sentences):
+                if sentence.strip():
+                    segments.append({
+                        "start": i * duration_per_sentence,
+                        "end": (i + 1) * duration_per_sentence,
+                        "text": sentence.strip()
                     })
-                elif isinstance(word, dict):
+        
+        # Создаем words из segments если нет отдельных words
+        if not words and segments:
+            for segment in segments:
+                segment_words = segment['text'].split()
+                word_duration = (segment['end'] - segment['start']) / len(segment_words) if segment_words else 1.0
+                
+                for j, word in enumerate(segment_words):
                     words.append({
-                        "word": word['word'].strip(),
-                        "start": word['start'],
-                        "end": word['end']
+                        "word": word,
+                        "start": segment['start'] + j * word_duration,
+                        "end": segment['start'] + (j + 1) * word_duration
                     })
         
         result = {
@@ -332,7 +347,7 @@ def create_fallback_clips(segments: List[Dict], video_duration: float) -> List[D
     clips = []
     
     for i, segment in enumerate(segments[:3]):
-        if segment['end'] - segment['start'] >= 15:
+        if segment['end'] - segment['start'] >= 10:
             clips.append({
                 "start_time": segment['start'],
                 "end_time": min(segment['end'] + 10, video_duration),
@@ -416,8 +431,27 @@ def cut_video_with_moviepy(video_path: str, start_time: float, end_time: float,
             
             video = video.resize((1080, 1920))
         
-        # Сохраняем без субтитров для простоты
-        video.write_videofile(
+        # Добавляем простые субтитры
+        try:
+            subtitle = TextClip(
+                transcript_segment,
+                fontsize=60,
+                color='white',
+                stroke_color='black',
+                stroke_width=3,
+                font='Arial-Bold',
+                method='caption',
+                size=(video.w * 0.9, None),
+                align='center'
+            ).set_position(('center', 0.8), relative=True).set_duration(video.duration)
+            
+            final_video = CompositeVideoClip([video, subtitle])
+        except:
+            # Если субтитры не работают, сохраняем без них
+            final_video = video
+        
+        # Сохраняем
+        final_video.write_videofile(
             output_path,
             codec="libx264",
             audio_codec="aac",
@@ -429,6 +463,9 @@ def cut_video_with_moviepy(video_path: str, start_time: float, end_time: float,
         
         # Очищаем память
         video.close()
+        if 'subtitle' in locals():
+            subtitle.close()
+        final_video.close()
         
         logger.info(f"✅ MoviePy cutting successful: {output_path}")
         return True
