@@ -749,7 +749,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
-# ПАТЧ v15.1 - Добавление недостающих endpoints
+# ПАТЧ v15.2 - ИСПРАВЛЕННАЯ ВЕРСИЯ
 # Добавить в конец файла agentflow_ai_clips_v15_production.py
 
 @app.post("/api/clips/generate")
@@ -760,13 +760,11 @@ async def generate_clips(
 ):
     """Генерация клипов с субтитрами"""
     try:
-        # Проверяем что анализ завершен
-        task_file = TASKS_DIR / f"{task_id}.json"
-        if not task_file.exists():
-            raise HTTPException(status_code=404, detail="Task not found")
+        # Проверяем что задача существует в completed_tasks
+        if task_id not in completed_tasks:
+            raise HTTPException(status_code=404, detail="Task not found or not completed")
         
-        with open(task_file, 'r') as f:
-            task_data = json.load(f)
+        task_data = completed_tasks[task_id]
         
         if task_data['status'] != 'completed':
             raise HTTPException(status_code=400, detail="Analysis not completed")
@@ -783,10 +781,8 @@ async def generate_clips(
             "clips": []
         }
         
-        # Сохраняем задачу генерации
-        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
-        with open(generation_file, 'w') as f:
-            json.dump(generation_task, f)
+        # Сохраняем в completed_tasks с префиксом gen_
+        completed_tasks[f"gen_{generation_id}"] = generation_task
         
         # Добавляем в очередь
         await add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
@@ -805,13 +801,11 @@ async def generate_clips(
 async def get_generation_status(generation_id: str):
     """Получить статус генерации клипов"""
     try:
-        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
-        if not generation_file.exists():
+        generation_key = f"gen_{generation_id}"
+        if generation_key not in completed_tasks:
             raise HTTPException(status_code=404, detail="Generation task not found")
         
-        with open(generation_file, 'r') as f:
-            generation_data = json.load(f)
-        
+        generation_data = completed_tasks[generation_key]
         return generation_data
         
     except Exception as e:
@@ -839,14 +833,10 @@ async def download_clip(clip_id: str):
 async def generation_clips_task(generation_id: str, task_data: dict):
     """Фоновая задача генерации клипов"""
     try:
-        # Обновляем статус
-        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
-        with open(generation_file, 'r') as f:
-            generation_data = json.load(f)
-        
+        # Обновляем статус в completed_tasks
+        generation_key = f"gen_{generation_id}"
+        generation_data = completed_tasks[generation_key]
         generation_data['status'] = 'processing'
-        with open(generation_file, 'w') as f:
-            json.dump(generation_data, f)
         
         # Генерируем клипы для каждого лучшего момента
         clips = []
@@ -859,16 +849,16 @@ async def generation_clips_task(generation_id: str, task_data: dict):
             
             # FFmpeg команда для нарезки в 9:16
             cmd = [
-                'ffmpeg', '-i', input_file,
+                'ffmpeg', '-i', str(input_file),
                 '-ss', str(moment['start_time']),
                 '-t', str(moment['end_time'] - moment['start_time']),
                 '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+                '-c:v', 'libx264', '-preset', config.VIDEO_PRESET, '-crf', config.VIDEO_CRF,
                 '-c:a', 'aac', '-b:a', '128k',
                 '-y', str(output_file)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=config.FFMPEG_TIMEOUT)
             
             if result.returncode == 0:
                 clips.append({
@@ -878,20 +868,66 @@ async def generation_clips_task(generation_id: str, task_data: dict):
                     "viral_score": moment['viral_score'],
                     "download_url": f"/api/clips/{clip_id}/download"
                 })
+                logger.info(f"✅ Generated clip {clip_id}: {moment['title']}")
+            else:
+                logger.error(f"❌ Failed to generate clip for moment {i}: {result.stderr}")
         
         # Обновляем результат
         generation_data['status'] = 'completed'
         generation_data['clips'] = clips
-        with open(generation_file, 'w') as f:
-            json.dump(generation_data, f)
+        generation_data['completed_at'] = datetime.now().isoformat()
         
-        logger.info(f"Generated {len(clips)} clips for {generation_id}")
+        logger.info(f"🎬 Generated {len(clips)} clips for {generation_id}")
         
     except Exception as e:
         logger.error(f"Error in generation task: {e}")
         generation_data['status'] = 'failed'
         generation_data['error'] = str(e)
-        with open(generation_file, 'w') as f:
-            json.dump(generation_data, f)
+        generation_data['failed_at'] = datetime.now().isoformat()
 
+# Дополнительный endpoint для получения списка всех клипов задачи
+@app.get("/api/videos/{task_id}/clips")
+async def get_task_clips(task_id: str):
+    """Получить все клипы для задачи"""
+    try:
+        # Ищем все генерации для этой задачи
+        task_clips = []
+        for key, data in completed_tasks.items():
+            if key.startswith("gen_") and data.get("task_id") == task_id:
+                if data.get("status") == "completed" and "clips" in data:
+                    task_clips.extend(data["clips"])
+        
+        return {
+            "task_id": task_id,
+            "clips": task_clips,
+            "total_clips": len(task_clips)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting task clips: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ПАТЧ v15.3 - Увеличение лимита размера файла
+# Заменить в классе Config в agentflow_ai_clips_v15_production.py
+
+class Config:
+    # Лимиты ресурсов
+    MAX_CONCURRENT_TASKS = 2  # Максимум задач одновременно
+    MAX_QUEUE_SIZE = 10       # Максимум задач в очереди
+    MAX_VIDEO_SIZE_MB = 150   # УВЕЛИЧЕНО: Максимум размер видео (было 100)
+    MAX_VIDEO_DURATION = 300  # Максимум длительность видео (5 мин)
+    
+    # Таймауты
+    FFMPEG_TIMEOUT = 120      # Таймаут FFmpeg операций
+    OPENAI_TIMEOUT = 60       # Таймаут OpenAI запросов
+    CLEANUP_INTERVAL = 300    # Очистка файлов каждые 5 мин
+    
+    # Качество видео (оптимизированное)
+    VIDEO_BITRATE = "2000k"   # Уменьшенный битрейт
+    VIDEO_PRESET = "fast"     # Быстрый пресет
+    VIDEO_CRF = "28"          # Сжатие
+    
+    # Память
+    MEMORY_LIMIT_PERCENT = 80 # Лимит использования памяти
+    FORCE_GC_INTERVAL = 60    # Принудительная очистка памяти
 
