@@ -1,6 +1,6 @@
 """
-AgentFlow AI Clips v15.0 - PRODUCTION READY
-Оптимизированная архитектура для масштабирования
+AgentFlow AI Clips v15.2.1 - PRODUCTION READY + ИСПРАВЛЕННЫЕ ENDPOINTS + QUEUE FIX
+Полная версия с исправленной функцией add_to_queue
 
 ОПТИМИЗАЦИИ ДЛЯ PRODUCTION:
 1. Queue система для задач
@@ -9,6 +9,8 @@ AgentFlow AI Clips v15.0 - PRODUCTION READY
 4. Batch обработка
 5. Кэширование результатов
 6. Мониторинг ресурсов
+7. ИСПРАВЛЕННЫЕ ENDPOINTS для генерации клипов
+8. ИСПРАВЛЕННАЯ QUEUE ФУНКЦИЯ
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -37,7 +39,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.0.0")
+app = FastAPI(title="AgentFlow AI Clips", version="15.2.1")
 
 # CORS
 app.add_middleware(
@@ -53,7 +55,7 @@ class Config:
     # Лимиты ресурсов
     MAX_CONCURRENT_TASKS = 2  # Максимум задач одновременно
     MAX_QUEUE_SIZE = 10       # Максимум задач в очереди
-    MAX_VIDEO_SIZE_MB = 100   # Максимум размер видео
+    MAX_VIDEO_SIZE_MB = 150   # УВЕЛИЧЕНО: Максимум размер видео (было 100)
     MAX_VIDEO_DURATION = 300  # Максимум длительность видео (5 мин)
     
     # Таймауты
@@ -148,521 +150,326 @@ def cleanup_old_files():
     except Exception as e:
         logger.error(f"Cleanup failed: {e}")
 
-def force_memory_cleanup():
-    """Принудительная очистка памяти"""
-    try:
-        gc.collect()
-        logger.info(f"🧠 Memory cleanup: {monitor.get_memory_usage():.1f}% used")
-    except Exception as e:
-        logger.error(f"Memory cleanup failed: {e}")
-
-# Фоновые задачи очистки
-async def background_cleanup():
-    """Фоновая очистка ресурсов"""
-    while True:
-        await asyncio.sleep(config.CLEANUP_INTERVAL)
-        cleanup_old_files()
-
-async def background_memory_cleanup():
-    """Фоновая очистка памяти"""
-    while True:
-        await asyncio.sleep(config.FORCE_GC_INTERVAL)
-        force_memory_cleanup()
-
-# Запуск фоновых задач
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(background_cleanup())
-    asyncio.create_task(background_memory_cleanup())
-    logger.info("🚀 Background tasks started")
-
-def get_video_info(video_path: str) -> Tuple[float, int, int]:
-    """Получает информацию о видео: длительность, ширина, высота"""
-    try:
-        cmd = [
-            'ffprobe', '-v', 'quiet', '-print_format', 'json',
-            '-show_format', '-show_streams', video_path
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            
-            duration = float(data['format']['duration'])
-            
-            video_stream = next(
-                (s for s in data['streams'] if s['codec_type'] == 'video'), 
-                None
-            )
-            
-            if video_stream:
-                width = int(video_stream['width'])
-                height = int(video_stream['height'])
-                return duration, width, height
-            
-        return 0.0, 0, 0
-        
-    except Exception as e:
-        logger.error(f"Failed to get video info: {e}")
-        return 0.0, 0, 0
-
-def validate_video_file(file_path: str, file_size: int) -> bool:
-    """Валидация видео файла"""
-    try:
-        # Проверка размера
-        if file_size > config.MAX_VIDEO_SIZE_MB * 1024 * 1024:
-            logger.error(f"Video too large: {file_size / 1024 / 1024:.1f}MB")
-            return False
-        
-        # Проверка длительности
-        duration, width, height = get_video_info(file_path)
-        
-        if duration > config.MAX_VIDEO_DURATION:
-            logger.error(f"Video too long: {duration:.1f}s")
-            return False
-        
-        if width == 0 or height == 0:
-            logger.error("Invalid video format")
-            return False
-        
-        logger.info(f"✅ Video validated: {duration:.1f}s, {width}x{height}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Video validation failed: {e}")
-        return False
-
-def extract_audio_optimized(video_path: str, audio_path: str) -> bool:
-    """Оптимизированное извлечение аудио"""
-    try:
-        logger.info(f"Extracting audio (optimized): {video_path}")
-        
-        cmd = [
-            'ffmpeg', '-i', video_path,
-            '-vn', '-acodec', 'pcm_s16le',
-            '-ar', '16000', '-ac', '1',
-            '-t', '300',  # Лимит 5 минут
-            '-y', audio_path
-        ]
-        
-        result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            timeout=config.FFMPEG_TIMEOUT
-        )
-        
-        if result.returncode == 0:
-            logger.info("✅ Audio extraction successful")
-            return True
-        else:
-            logger.error(f"FFmpeg error: {result.stderr}")
-            return False
-            
-    except subprocess.TimeoutExpired:
-        logger.error("Audio extraction timeout")
-        return False
-    except Exception as e:
-        logger.error(f"Audio extraction failed: {e}")
-        return False
-
-def cut_video_optimized(video_path: str, start_time: float, end_time: float, 
-                       output_path: str, aspect_ratio: str = "9:16") -> bool:
-    """Оптимизированная нарезка видео"""
-    try:
-        logger.info(f"Cutting video (optimized): {start_time}-{end_time}s")
-        
-        duration = end_time - start_time
-        
-        # Базовая команда
-        cmd = [
-            'ffmpeg', '-i', video_path,
-            '-ss', str(start_time),
-            '-t', str(duration),
-            '-c:v', 'libx264', 
-            '-preset', config.VIDEO_PRESET,
-            '-crf', config.VIDEO_CRF,
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-avoid_negative_ts', 'make_zero',
-            '-movflags', '+faststart',  # Быстрый старт воспроизведения
-            '-y', output_path
-        ]
-        
-        # Добавляем кроппинг для 9:16
-        if aspect_ratio == "9:16":
-            cmd.insert(-3, '-vf')
-            cmd.insert(-3, 'crop=ih*9/16:ih,scale=1080:1920')
-        
-        logger.info(f"FFmpeg command: {' '.join(cmd)}")
-        
-        result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            timeout=config.FFMPEG_TIMEOUT
-        )
-        
-        if result.returncode == 0:
-            logger.info(f"✅ Video cut successful: {output_path}")
-            return True
-        else:
-            logger.error(f"FFmpeg cutting error: {result.stderr}")
-            return False
-            
-    except subprocess.TimeoutExpired:
-        logger.error("Video cutting timeout")
-        return False
-    except Exception as e:
-        logger.error(f"Video cutting failed: {e}")
-        return False
-
-async def transcribe_with_retry(audio_path: str, language: str = "en", max_retries: int = 3) -> Dict:
-    """Транскрибация с повторными попытками"""
-    if not client:
-        raise Exception("OpenAI client not available")
+# Автоматическая очистка каждые 5 минут
+def start_cleanup_scheduler():
+    def cleanup_loop():
+        while True:
+            time.sleep(config.CLEANUP_INTERVAL)
+            cleanup_old_files()
     
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Transcription attempt {attempt + 1}/{max_retries}")
-            
-            with open(audio_path, "rb") as audio_file:
-                transcription = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    language=language,
-                    response_format="verbose_json"
-                )
-            
-            # Обработка результатов
-            segments = []
-            words = []
-            
-            if hasattr(transcription, 'segments') and transcription.segments:
-                for segment in transcription.segments:
-                    if hasattr(segment, 'start'):
-                        segments.append({
-                            "start": segment.start,
-                            "end": segment.end,
-                            "text": segment.text.strip()
-                        })
-            
-            # Создаем fallback сегменты если нужно
-            if not segments and hasattr(transcription, 'text'):
-                full_text = transcription.text
-                sentences = full_text.split('. ')
-                duration_per_sentence = 5.0
-                
-                for i, sentence in enumerate(sentences):
-                    if sentence.strip():
-                        segments.append({
-                            "start": i * duration_per_sentence,
-                            "end": (i + 1) * duration_per_sentence,
-                            "text": sentence.strip()
-                        })
-            
-            result = {
-                "full_text": transcription.text if hasattr(transcription, 'text') else '',
-                "segments": segments,
-                "words": words,
-                "language": transcription.language if hasattr(transcription, 'language') else language
-            }
-            
-            logger.info(f"✅ Transcription completed: {len(segments)} segments")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Transcription attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries - 1:
-                raise Exception(f"Failed to transcribe after {max_retries} attempts: {str(e)}")
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+    cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+    cleanup_thread.start()
 
-async def analyze_with_gpt_optimized(transcript: Dict, video_duration: float) -> List[Dict]:
-    """Оптимизированный анализ с GPT"""
-    if not client:
-        return create_fallback_clips(transcript["segments"], video_duration)
-    
-    try:
-        logger.info("Starting optimized GPT analysis...")
-        
-        # Ограничиваем размер текста для GPT
-        segments = transcript["segments"][:20]  # Максимум 20 сегментов
-        
-        segments_text = "\n".join([
-            f"{seg['start']:.1f}s-{seg['end']:.1f}s: {seg['text'][:100]}"  # Ограничиваем длину
-            for seg in segments
-        ])
-        
-        prompt = f"""
-        Find 2-3 BEST viral moments from this video transcript (max 60 seconds each).
-        
-        TRANSCRIPT:
-        {segments_text}
-        
-        Return JSON:
-        {{
-          "clips": [
-            {{
-              "start_time": 15.2,
-              "end_time": 45.8,
-              "title": "Short Title",
-              "description": "Brief description",
-              "viral_score": 95,
-              "transcript_segment": "exact text"
-            }}
-          ]
-        }}
-        """
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Быстрее чем GPT-4
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are a viral video expert. Return only valid JSON."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=1000  # Ограничиваем токены
-        )
-        
-        analysis_text = response.choices[0].message.content
-        
-        try:
-            analysis_data = json.loads(analysis_text)
-            clips = analysis_data.get("clips", [])[:3]  # Максимум 3 клипа
-            logger.info(f"✅ GPT analysis completed: {len(clips)} clips")
-            return clips
-        except json.JSONDecodeError:
-            return create_fallback_clips(segments, video_duration)
-            
-    except Exception as e:
-        logger.error(f"GPT analysis failed: {e}")
-        return create_fallback_clips(transcript["segments"], video_duration)
+# Запуск очистки при старте
+start_cleanup_scheduler()
 
-def create_fallback_clips(segments: List[Dict], video_duration: float) -> List[Dict]:
-    """Создает базовые клипы"""
-    clips = []
-    
-    for i, segment in enumerate(segments[:3]):
-        if segment['end'] - segment['start'] >= 5:
-            clips.append({
-                "start_time": segment['start'],
-                "end_time": min(segment['end'] + 5, video_duration),
-                "title": f"Moment {i+1}",
-                "description": "Interesting moment",
-                "viral_score": 75,
-                "transcript_segment": segment['text']
-            })
-    
-    return clips
-
-# QUEUE MANAGEMENT
-def add_task_to_queue(task_data: Dict) -> bool:
-    """Добавляет задачу в очередь"""
+# Queue управление - ИСПРАВЛЕННАЯ ВЕРСИЯ
+def add_to_queue(task_name: str, task_func, *args):
+    """Добавить задачу в очередь"""
     with task_lock:
         if len(task_queue) >= config.MAX_QUEUE_SIZE:
-            return False
+            raise HTTPException(status_code=429, detail="Queue is full")
         
-        task_queue.append(task_data)
-        logger.info(f"📋 Task added to queue: {task_data['task_id']}")
-        return True
+        if len(active_tasks) >= config.MAX_CONCURRENT_TASKS:
+            task_queue.append((task_name, task_func, args))
+            return len(task_queue)
+        else:
+            # Запускаем сразу
+            active_tasks[task_name] = True
+            executor.submit(run_task, task_name, task_func, *args)
+            return 0
 
-def get_next_task() -> Optional[Dict]:
-    """Получает следующую задачу из очереди"""
-    with task_lock:
-        if task_queue:
-            return task_queue.popleft()
-        return None
-
-def process_task_queue():
-    """Обрабатывает очередь задач"""
-    while True:
-        try:
-            # Проверяем нагрузку системы
-            if monitor.is_system_overloaded():
-                logger.warning("⚠️ System overloaded, waiting...")
-                time.sleep(30)
-                continue
-            
-            # Проверяем количество активных задач
-            if len(active_tasks) >= config.MAX_CONCURRENT_TASKS:
-                time.sleep(5)
-                continue
-            
-            # Получаем следующую задачу
-            task_data = get_next_task()
-            if not task_data:
-                time.sleep(5)
-                continue
-            
-            # Запускаем обработку
-            task_id = task_data['task_id']
-            active_tasks[task_id] = task_data
-            
-            logger.info(f"🚀 Starting task: {task_id}")
-            
-            # Запускаем в thread pool
-            future = executor.submit(process_video_task, task_data)
-            
-            # Ждем завершения или таймаута
-            try:
-                future.result(timeout=300)  # 5 минут максимум
-            except Exception as e:
-                logger.error(f"Task {task_id} failed: {e}")
-            finally:
-                if task_id in active_tasks:
-                    del active_tasks[task_id]
-                
-                # Принудительная очистка памяти
-                force_memory_cleanup()
-            
-        except Exception as e:
-            logger.error(f"Queue processing error: {e}")
-            time.sleep(10)
-
-def process_video_task(task_data: Dict):
-    """Обработка видео задачи"""
-    task_id = task_data['task_id']
-    video_path = task_data['file_path']
-    language = task_data['language']
-    
+def run_task(task_name: str, task_func, *args):
+    """Выполнить задачу"""
     try:
-        logger.info(f"Processing video task: {task_id}")
-        
-        # Обновляем статус
-        task_data['status'] = 'processing'
-        task_data['progress'] = 10
-        
-        # Извлечение аудио
-        audio_path = AUDIO_DIR / f"{task_id}.wav"
-        
-        if not extract_audio_optimized(video_path, str(audio_path)):
-            raise Exception("Failed to extract audio")
-        
-        task_data['progress'] = 30
-        
-        # Транскрибация
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        transcript = loop.run_until_complete(
-            transcribe_with_retry(str(audio_path), language)
-        )
-        
-        task_data['transcript'] = transcript
-        task_data['progress'] = 70
-        
-        # Получаем длительность видео
-        duration, _, _ = get_video_info(video_path)
-        
-        # Анализ лучших моментов
-        best_moments = loop.run_until_complete(
-            analyze_with_gpt_optimized(transcript, duration)
-        )
-        
-        task_data['best_moments'] = best_moments
-        task_data['video_duration'] = duration
-        task_data['status'] = 'completed'
-        task_data['progress'] = 100
-        
-        # Сохраняем в completed_tasks
-        completed_tasks[task_id] = task_data
-        
-        logger.info(f"✅ Task completed: {task_id}")
-        
-        # Очистка временных файлов
-        if audio_path.exists():
-            audio_path.unlink()
-        
-        loop.close()
-        
+        task_func(*args)
     except Exception as e:
-        logger.error(f"Task {task_id} failed: {e}")
-        task_data['status'] = 'error'
-        task_data['error'] = str(e)
+        logger.error(f"Task {task_name} failed: {e}")
+    finally:
+        with task_lock:
+            if task_name in active_tasks:
+                del active_tasks[task_name]
+            
+            # Запускаем следующую задачу из очереди
+            if task_queue and len(active_tasks) < config.MAX_CONCURRENT_TASKS:
+                next_task_name, next_task_func, next_args = task_queue.popleft()
+                active_tasks[next_task_name] = True
+                executor.submit(run_task, next_task_name, next_task_func, *next_args)
 
-# Запуск обработчика очереди в отдельном потоке
-queue_thread = threading.Thread(target=process_task_queue, daemon=True)
-queue_thread.start()
-
-@app.get("/")
-async def root():
-    return {
-        "service": "AgentFlow AI Clips",
-        "version": "15.0.0",
-        "description": "Production-ready video clipping with queue system",
-        "features": {
-            "queue_system": True,
-            "resource_monitoring": True,
-            "optimized_processing": True,
-            "concurrent_tasks": config.MAX_CONCURRENT_TASKS,
-            "max_queue_size": config.MAX_QUEUE_SIZE
-        },
-        "system_status": {
-            "memory_usage": f"{monitor.get_memory_usage():.1f}%",
-            "active_tasks": len(active_tasks),
-            "queue_size": len(task_queue)
-        }
-    }
-
-@app.get("/health")
-async def health_check():
+# Проверка зависимостей
+def check_dependencies():
+    """Проверка доступности зависимостей"""
     deps = {
         "ffmpeg": False,
-        "openai": client is not None
+        "openai": False
     }
     
+    # Проверка FFmpeg
     try:
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
         deps["ffmpeg"] = result.returncode == 0
     except:
         pass
     
-    system_status = {
+    # Проверка OpenAI
+    deps["openai"] = client is not None
+    
+    return deps
+
+# Основные функции
+def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
+    """Извлечение аудио из видео"""
+    try:
+        cmd = [
+            'ffmpeg', '-i', video_path,
+            '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+            '-y', audio_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=config.FFMPEG_TIMEOUT)
+        return result.returncode == 0
+    except Exception as e:
+        logger.error(f"Audio extraction failed: {e}")
+        return False
+
+def transcribe_audio(audio_path: str) -> Optional[dict]:
+    """Транскрибация аудио через OpenAI Whisper"""
+    if not client:
+        logger.error("OpenAI client not available")
+        return None
+    
+    try:
+        with open(audio_path, 'rb') as audio_file:
+            # Совместимая версия для OpenAI 1.3.0
+            response = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="verbose_json"
+            )
+        
+        # Создаем временные метки если их нет
+        segments = []
+        if hasattr(response, 'segments') and response.segments:
+            segments = [
+                {
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text
+                }
+                for seg in response.segments
+            ]
+        else:
+            # Fallback: создаем простые сегменты
+            text = response.text
+            words = text.split()
+            segment_length = 5.0  # 5 секунд на сегмент
+            words_per_segment = max(1, len(words) // max(1, int(len(words) * segment_length / 60)))
+            
+            for i in range(0, len(words), words_per_segment):
+                segment_words = words[i:i + words_per_segment]
+                start_time = i * segment_length / words_per_segment
+                end_time = min(start_time + segment_length, len(words) * segment_length / words_per_segment)
+                
+                segments.append({
+                    "start": start_time,
+                    "end": end_time,
+                    "text": " ".join(segment_words)
+                })
+        
+        return {
+            "full_text": response.text,
+            "segments": segments,
+            "words": [],  # Не поддерживается в 1.3.0
+            "language": "english"
+        }
+        
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        return None
+
+def analyze_best_moments(transcript: dict) -> List[dict]:
+    """Анализ лучших моментов через ChatGPT"""
+    if not client:
+        logger.error("OpenAI client not available")
+        return []
+    
+    try:
+        # Используем GPT-3.5-turbo для скорости
+        prompt = f"""
+        Analyze this video transcript and find the 2-3 BEST viral moments for social media clips.
+        
+        Transcript: {transcript['full_text']}
+        
+        For each moment, provide:
+        1. Start and end time (in seconds)
+        2. Catchy title (max 30 chars)
+        3. Brief description
+        4. Viral score (1-100)
+        5. The exact transcript segment
+        
+        Focus on:
+        - Emotional peaks
+        - Surprising statements
+        - Actionable advice
+        - Controversial or debate-worthy content
+        - Clear, standalone messages
+        
+        Return as JSON array with this structure:
+        [
+          {{
+            "start_time": 0.0,
+            "end_time": 10.0,
+            "title": "Amazing Insight",
+            "description": "Brief description",
+            "viral_score": 85,
+            "transcript_segment": "exact text from transcript"
+          }}
+        ]
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # Быстрее чем GPT-4
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        
+        content = response.choices[0].message.content
+        
+        # Извлекаем JSON из ответа
+        import re
+        json_match = re.search(r'\[.*\]', content, re.DOTALL)
+        if json_match:
+            moments = json.loads(json_match.group())
+            # Ограничиваем до 3 моментов для производительности
+            return moments[:3]
+        
+        return []
+        
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        return []
+
+def get_video_duration(video_path: str) -> float:
+    """Получить длительность видео"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json',
+            '-show_format', video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return float(data['format']['duration'])
+        
+        return 0.0
+    except:
+        return 0.0
+
+# Фоновая задача анализа
+def analyze_video_task(task_id: str, file_path: str):
+    """Фоновая задача анализа видео"""
+    try:
+        # Обновляем статус
+        completed_tasks[task_id]['status'] = 'processing: Извлечение аудио'
+        
+        # Извлекаем аудио
+        audio_path = AUDIO_DIR / f"{task_id}.wav"
+        if not extract_audio_from_video(file_path, str(audio_path)):
+            raise Exception("Failed to extract audio")
+        
+        # Транскрибация
+        completed_tasks[task_id]['status'] = 'processing: Транскрибация'
+        transcript = transcribe_audio(str(audio_path))
+        if not transcript:
+            raise Exception("Failed to transcribe audio")
+        
+        # Анализ лучших моментов
+        completed_tasks[task_id]['status'] = 'processing: Анализ моментов'
+        best_moments = analyze_best_moments(transcript)
+        
+        # Получаем длительность видео
+        video_duration = get_video_duration(file_path)
+        
+        # Финализация
+        completed_tasks[task_id]['status'] = 'processing: Финализация'
+        completed_tasks[task_id].update({
+            'status': 'completed',
+            'progress': 100,
+            'transcript': transcript,
+            'best_moments': best_moments,
+            'video_duration': video_duration,
+            'language': 'en'
+        })
+        
+        # Очистка аудио файла
+        try:
+            audio_path.unlink()
+        except:
+            pass
+        
+        logger.info(f"✅ Analysis completed for {task_id}")
+        
+    except Exception as e:
+        logger.error(f"Analysis failed for task {task_id}: {e}")
+        completed_tasks[task_id].update({
+            'status': 'failed',
+            'error': str(e)
+        })
+
+# API ENDPOINTS
+
+@app.get("/")
+async def root():
+    return {
+        "service": "AgentFlow AI Clips",
+        "version": "15.2.1",
+        "status": "running",
+        "features": [
+            "Video analysis with Whisper AI",
+            "Best moments detection with ChatGPT",
+            "Automated video clipping",
+            "Multiple subtitle styles",
+            "Queue system for scalability",
+            "Resource monitoring"
+        ]
+    }
+
+@app.get("/health")
+async def health_check():
+    """Проверка здоровья сервиса"""
+    deps = check_dependencies()
+    system_stats = {
         "memory_usage": monitor.get_memory_usage(),
         "cpu_usage": monitor.get_cpu_usage(),
         "disk_usage": monitor.get_disk_usage(),
         "overloaded": monitor.is_system_overloaded()
     }
     
+    queue_stats = {
+        "active_tasks": len(active_tasks),
+        "queued_tasks": len(task_queue),
+        "max_concurrent": config.MAX_CONCURRENT_TASKS
+    }
+    
     return {
         "status": "healthy",
-        "version": "15.0.0",
+        "version": "15.2.1",
         "dependencies": deps,
-        "system": system_status,
-        "queue": {
-            "active_tasks": len(active_tasks),
-            "queued_tasks": len(task_queue),
-            "max_concurrent": config.MAX_CONCURRENT_TASKS
-        }
+        "system": system_stats,
+        "queue": queue_stats
     }
 
 @app.post("/api/videos/analyze")
-async def analyze_video_optimized(file: UploadFile = File(...), language: str = Form("en")):
-    """Оптимизированная загрузка и анализ видео"""
+async def analyze_video(file: UploadFile = File(...)):
+    """Анализ видео с очередью"""
     try:
-        # Проверка нагрузки системы
+        # Проверка перегрузки системы
         if monitor.is_system_overloaded():
-            raise HTTPException(
-                status_code=503, 
-                detail="System overloaded. Please try again later."
-            )
-        
-        # Проверка очереди
-        if len(task_queue) >= config.MAX_QUEUE_SIZE:
-            raise HTTPException(
-                status_code=503, 
-                detail="Queue is full. Please try again later."
-            )
-        
-        logger.info(f"Analyzing video (optimized): {file.filename}")
-        
-        task_id = str(uuid.uuid4())
+            raise HTTPException(status_code=503, detail="System overloaded")
         
         # Проверка размера файла
+        file_size = 0
         content = await file.read()
         file_size = len(content)
         
@@ -672,85 +479,68 @@ async def analyze_video_optimized(file: UploadFile = File(...), language: str = 
                 detail=f"File too large. Max size: {config.MAX_VIDEO_SIZE_MB}MB"
             )
         
+        # Создание задачи
+        task_id = str(uuid.uuid4())
+        file_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
+        
         # Сохранение файла
-        file_extension = file.filename.split('.')[-1]
-        video_filename = f"{task_id}_{file.filename}"
-        video_path = UPLOAD_DIR / video_filename
+        with open(file_path, 'wb') as f:
+            f.write(content)
         
-        async with aiofiles.open(video_path, 'wb') as f:
-            await f.write(content)
-        
-        # Валидация видео
-        if not validate_video_file(str(video_path), file_size):
-            video_path.unlink()  # Удаляем невалидный файл
+        # Проверка длительности видео
+        duration = get_video_duration(str(file_path))
+        if duration > config.MAX_VIDEO_DURATION:
+            file_path.unlink()  # Удаляем файл
             raise HTTPException(
-                status_code=400, 
-                detail="Invalid video file or too long"
+                status_code=413,
+                detail=f"Video too long. Max duration: {config.MAX_VIDEO_DURATION} seconds"
             )
         
-        # Создание задачи
+        # Создание записи задачи
         task_data = {
             "task_id": task_id,
             "status": "queued",
             "progress": 0,
             "created_at": datetime.now().isoformat(),
-            "file_path": str(video_path),
-            "language": language,
-            "file_size": file_size
+            "file_path": str(file_path),
+            "file_size": file_size,
+            "result": None,
+            "error": None
         }
         
-        # Добавление в очередь
-        if not add_task_to_queue(task_data):
-            video_path.unlink()
-            raise HTTPException(
-                status_code=503, 
-                detail="Failed to add task to queue"
-            )
+        completed_tasks[task_id] = task_data
         
-        return {
-            "task_id": task_id, 
+        # Добавление в очередь - ИСПРАВЛЕНО: убран await
+        queue_position = add_to_queue(f"analyze_{task_id}", analyze_video_task, task_id, str(file_path))
+        
+        response = {
+            "task_id": task_id,
             "status": "queued",
-            "queue_position": len(task_queue),
-            "estimated_wait_time": len(task_queue) * 60  # Примерно 1 минута на задачу
+            "queue_position": queue_position,
+            "estimated_wait_time": queue_position * 60  # Примерно 60 сек на задачу
         }
+        
+        if queue_position == 0:
+            response["status"] = "processing"
+            response["message"] = "Analysis started immediately"
+        
+        return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        logger.error(f"Error in analyze_video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/videos/{task_id}/status")
-async def get_video_status_optimized(task_id: str):
-    """Получение статуса анализа видео"""
+async def get_analysis_status(task_id: str):
+    """Получить статус анализа"""
+    if task_id not in completed_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
     
-    # Проверяем активные задачи
-    if task_id in active_tasks:
-        return active_tasks[task_id]
-    
-    # Проверяем завершенные задачи
-    if task_id in completed_tasks:
-        return completed_tasks[task_id]
-    
-    # Проверяем очередь
-    for task in task_queue:
-        if task['task_id'] == task_id:
-            queue_position = list(task_queue).index(task) + 1
-            task['queue_position'] = queue_position
-            task['estimated_wait_time'] = queue_position * 60
-            return task
-    
-    raise HTTPException(status_code=404, detail="Task not found")
+    return completed_tasks[task_id]
 
-# Остальные endpoints остаются такими же, но с оптимизациями...
-# (cut_clips, generate_subtitle_data, download_clip, render_clip_with_subtitles)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-# ПАТЧ v15.2 - ИСПРАВЛЕННАЯ ВЕРСИЯ
-# Добавить в конец файла agentflow_ai_clips_v15_production.py
+# ENDPOINTS ДЛЯ ГЕНЕРАЦИИ КЛИПОВ (ИСПРАВЛЕННЫЕ)
 
 @app.post("/api/clips/generate")
 async def generate_clips(
@@ -784,8 +574,8 @@ async def generate_clips(
         # Сохраняем в completed_tasks с префиксом gen_
         completed_tasks[f"gen_{generation_id}"] = generation_task
         
-        # Добавляем в очередь
-        await add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
+        # Добавляем в очередь - ИСПРАВЛЕНО: убран await
+        add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
         
         return {
             "generation_id": generation_id,
@@ -830,7 +620,7 @@ async def download_clip(clip_id: str):
         logger.error(f"Error downloading clip: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-async def generation_clips_task(generation_id: str, task_data: dict):
+def generation_clips_task(generation_id: str, task_data: dict):
     """Фоновая задача генерации клипов"""
     try:
         # Обновляем статус в completed_tasks
@@ -907,27 +697,7 @@ async def get_task_clips(task_id: str):
         logger.error(f"Error getting task clips: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ПАТЧ v15.3 - Увеличение лимита размера файла
-# Заменить в классе Config в agentflow_ai_clips_v15_production.py
-
-class Config:
-    # Лимиты ресурсов
-    MAX_CONCURRENT_TASKS = 2  # Максимум задач одновременно
-    MAX_QUEUE_SIZE = 10       # Максимум задач в очереди
-    MAX_VIDEO_SIZE_MB = 150   # УВЕЛИЧЕНО: Максимум размер видео (было 100)
-    MAX_VIDEO_DURATION = 300  # Максимум длительность видео (5 мин)
-    
-    # Таймауты
-    FFMPEG_TIMEOUT = 120      # Таймаут FFmpeg операций
-    OPENAI_TIMEOUT = 60       # Таймаут OpenAI запросов
-    CLEANUP_INTERVAL = 300    # Очистка файлов каждые 5 мин
-    
-    # Качество видео (оптимизированное)
-    VIDEO_BITRATE = "2000k"   # Уменьшенный битрейт
-    VIDEO_PRESET = "fast"     # Быстрый пресет
-    VIDEO_CRF = "28"          # Сжатие
-    
-    # Память
-    MEMORY_LIMIT_PERCENT = 80 # Лимит использования памяти
-    FORCE_GC_INTERVAL = 60    # Принудительная очистка памяти
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
