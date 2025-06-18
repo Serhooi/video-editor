@@ -749,3 +749,149 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
+# ПАТЧ v15.1 - Добавление недостающих endpoints
+# Добавить в конец файла agentflow_ai_clips_v15_production.py
+
+@app.post("/api/clips/generate")
+async def generate_clips(
+    task_id: str = Form(...),
+    style: str = Form(default="beasty"),
+    aspect_ratio: str = Form(default="9:16")
+):
+    """Генерация клипов с субтитрами"""
+    try:
+        # Проверяем что анализ завершен
+        task_file = TASKS_DIR / f"{task_id}.json"
+        if not task_file.exists():
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        with open(task_file, 'r') as f:
+            task_data = json.load(f)
+        
+        if task_data['status'] != 'completed':
+            raise HTTPException(status_code=400, detail="Analysis not completed")
+        
+        # Создаем задачу генерации
+        generation_id = str(uuid.uuid4())
+        generation_task = {
+            "generation_id": generation_id,
+            "task_id": task_id,
+            "style": style,
+            "aspect_ratio": aspect_ratio,
+            "status": "queued",
+            "created_at": datetime.now().isoformat(),
+            "clips": []
+        }
+        
+        # Сохраняем задачу генерации
+        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
+        with open(generation_file, 'w') as f:
+            json.dump(generation_task, f)
+        
+        # Добавляем в очередь
+        await add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
+        
+        return {
+            "generation_id": generation_id,
+            "status": "queued",
+            "message": "Clips generation started"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error starting clips generation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/clips/generation/{generation_id}/status")
+async def get_generation_status(generation_id: str):
+    """Получить статус генерации клипов"""
+    try:
+        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
+        if not generation_file.exists():
+            raise HTTPException(status_code=404, detail="Generation task not found")
+        
+        with open(generation_file, 'r') as f:
+            generation_data = json.load(f)
+        
+        return generation_data
+        
+    except Exception as e:
+        logger.error(f"Error getting generation status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/clips/{clip_id}/download")
+async def download_clip(clip_id: str):
+    """Скачать готовый клип"""
+    try:
+        clip_file = CLIPS_DIR / f"{clip_id}.mp4"
+        if not clip_file.exists():
+            raise HTTPException(status_code=404, detail="Clip not found")
+        
+        return FileResponse(
+            path=clip_file,
+            media_type='video/mp4',
+            filename=f"clip_{clip_id}.mp4"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading clip: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def generation_clips_task(generation_id: str, task_data: dict):
+    """Фоновая задача генерации клипов"""
+    try:
+        # Обновляем статус
+        generation_file = TASKS_DIR / f"gen_{generation_id}.json"
+        with open(generation_file, 'r') as f:
+            generation_data = json.load(f)
+        
+        generation_data['status'] = 'processing'
+        with open(generation_file, 'w') as f:
+            json.dump(generation_data, f)
+        
+        # Генерируем клипы для каждого лучшего момента
+        clips = []
+        for i, moment in enumerate(task_data['best_moments']):
+            clip_id = str(uuid.uuid4())
+            
+            # Простая нарезка без субтитров (для скорости)
+            input_file = task_data['file_path']
+            output_file = CLIPS_DIR / f"{clip_id}.mp4"
+            
+            # FFmpeg команда для нарезки в 9:16
+            cmd = [
+                'ffmpeg', '-i', input_file,
+                '-ss', str(moment['start_time']),
+                '-t', str(moment['end_time'] - moment['start_time']),
+                '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '28',
+                '-c:a', 'aac', '-b:a', '128k',
+                '-y', str(output_file)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode == 0:
+                clips.append({
+                    "clip_id": clip_id,
+                    "title": moment['title'],
+                    "duration": moment['end_time'] - moment['start_time'],
+                    "viral_score": moment['viral_score'],
+                    "download_url": f"/api/clips/{clip_id}/download"
+                })
+        
+        # Обновляем результат
+        generation_data['status'] = 'completed'
+        generation_data['clips'] = clips
+        with open(generation_file, 'w') as f:
+            json.dump(generation_data, f)
+        
+        logger.info(f"Generated {len(clips)} clips for {generation_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in generation task: {e}")
+        generation_data['status'] = 'failed'
+        generation_data['error'] = str(e)
+        with open(generation_file, 'w') as f:
+            json.dump(generation_data, f)
+
+
