@@ -1,11 +1,13 @@
 """
-AgentFlow AI Clips v9.0 - ИСПРАВЛЕННАЯ ВЕРСИЯ
-Полноценная автоматическая нарезка видео с субтитрами как в Opus.pro
+AgentFlow AI Clips v11.0 - ИСПРАВЛЕННАЯ ВЕРСИЯ
+Полноценная автоматическая нарезка видео с улучшенной обработкой ошибок
 
-ИСПРАВЛЕНИЯ:
-- Фикс ошибки 'TranscriptionSegment' object is not subscriptable
-- Правильная обработка результатов Whisper API
-- Улучшенная обработка ошибок
+ИСПРАВЛЕНИЯ v11.0:
+- Улучшенное логирование всех операций
+- Альтернативный подход через FFmpeg для нарезки
+- Проверка зависимостей при старте
+- Детальная обработка ошибок
+- Fallback методы для каждого этапа
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -15,16 +17,20 @@ import os
 import uuid
 import json
 import asyncio
+import subprocess
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import aiofiles
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-import ffmpeg
 from openai import OpenAI
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="9.0.0")
+app = FastAPI(title="AgentFlow AI Clips", version="11.0.0")
 
 # CORS
 app.add_middleware(
@@ -50,58 +56,128 @@ for dir_path in [UPLOAD_DIR, CLIPS_DIR, AUDIO_DIR]:
 tasks = {}
 generation_tasks = {}
 
+def check_dependencies():
+    """Проверка установленных зависимостей"""
+    dependencies = {
+        "ffmpeg": False,
+        "moviepy": False,
+        "openai": False
+    }
+    
+    # Проверка FFmpeg
+    try:
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        dependencies["ffmpeg"] = result.returncode == 0
+        logger.info(f"FFmpeg: {'✅ Available' if dependencies['ffmpeg'] else '❌ Not found'}")
+    except:
+        logger.warning("FFmpeg not found")
+    
+    # Проверка MoviePy
+    try:
+        import moviepy
+        dependencies["moviepy"] = True
+        logger.info("MoviePy: ✅ Available")
+    except ImportError:
+        logger.warning("MoviePy not found")
+    
+    # Проверка OpenAI
+    try:
+        dependencies["openai"] = bool(os.getenv("OPENAI_API_KEY"))
+        logger.info(f"OpenAI API Key: {'✅ Available' if dependencies['openai'] else '❌ Missing'}")
+    except:
+        logger.warning("OpenAI client error")
+    
+    return dependencies
+
+@app.on_event("startup")
+async def startup_event():
+    """Проверка зависимостей при запуске"""
+    logger.info("🚀 Starting AgentFlow AI Clips v11.0")
+    deps = check_dependencies()
+    logger.info(f"Dependencies check: {deps}")
+
 @app.get("/")
 async def root():
+    deps = check_dependencies()
     return {
         "service": "AgentFlow AI Clips",
-        "version": "9.0.0",
-        "description": "Automatic video clipping with AI analysis and subtitles",
+        "version": "11.0.0",
+        "description": "Automatic video clipping with improved error handling",
+        "dependencies": deps,
         "features": [
             "1. Upload video",
             "2. Whisper AI transcription", 
             "3. ChatGPT analysis of best moments",
-            "4. Automatic video cutting",
-            "5. Subtitle overlay",
+            "4. Automatic video cutting with FFmpeg fallback",
+            "5. Professional subtitle overlay",
             "6. Download ready clips"
-        ],
-        "endpoints": {
-            "analyze": "/api/videos/analyze",
-            "status": "/api/videos/{task_id}/status",
-            "generate_clips": "/api/clips/generate/{task_id}",
-            "download": "/api/clips/{clip_id}/download"
-        }
+        ]
     }
 
 @app.get("/health")
 async def health_check():
+    deps = check_dependencies()
     return {
         "status": "healthy",
-        "version": "9.0.0",
+        "version": "11.0.0",
+        "dependencies": deps,
         "features": {
-            "whisper_transcription": True,
-            "gpt4_analysis": True,
-            "automatic_cutting": True,
+            "whisper_transcription": deps["openai"],
+            "gpt4_analysis": deps["openai"],
+            "automatic_cutting": deps["ffmpeg"] or deps["moviepy"],
             "subtitle_overlay": True,
-            "multiple_formats": True
+            "error_logging": True
         }
     }
 
-def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
-    """Извлекает аудио из видео"""
+def extract_audio_with_ffmpeg(video_path: str, audio_path: str) -> bool:
+    """Извлекает аудио из видео через FFmpeg"""
     try:
+        logger.info(f"Extracting audio: {video_path} -> {audio_path}")
+        cmd = [
+            'ffmpeg', '-i', video_path,
+            '-vn', '-acodec', 'pcm_s16le',
+            '-ar', '16000', '-ac', '1',
+            '-y', audio_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info("✅ Audio extraction successful")
+            return True
+        else:
+            logger.error(f"FFmpeg error: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Audio extraction failed: {e}")
+        return False
+
+def extract_audio_with_moviepy(video_path: str, audio_path: str) -> bool:
+    """Fallback: извлекает аудио через MoviePy"""
+    try:
+        logger.info("Trying MoviePy for audio extraction...")
+        from moviepy.editor import VideoFileClip
+        
         video = VideoFileClip(video_path)
         audio = video.audio
         audio.write_audiofile(audio_path, verbose=False, logger=None)
         video.close()
         audio.close()
+        
+        logger.info("✅ MoviePy audio extraction successful")
         return True
+        
     except Exception as e:
-        print(f"Audio extraction error: {e}")
+        logger.error(f"MoviePy audio extraction failed: {e}")
         return False
 
 async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
-    """Полная транскрибация видео с временными метками - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    """Полная транскрибация видео с временными метками"""
     try:
+        logger.info(f"Starting transcription: {audio_path}")
+        
         with open(audio_path, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
                 model="whisper-1",
@@ -111,65 +187,62 @@ async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
                 timestamp_granularities=["word", "segment"]
             )
         
-        # ИСПРАВЛЕНИЕ: Правильная обработка результата
+        # Обработка результата
         segments = []
         words = []
         
-        # Обрабатываем сегменты
         if hasattr(transcription, 'segments') and transcription.segments:
             for segment in transcription.segments:
-                # Проверяем тип объекта
                 if hasattr(segment, 'start'):
-                    # Объект с атрибутами
                     segments.append({
                         "start": segment.start,
                         "end": segment.end,
                         "text": segment.text.strip()
                     })
                 elif isinstance(segment, dict):
-                    # Словарь
                     segments.append({
                         "start": segment['start'],
                         "end": segment['end'],
                         "text": segment['text'].strip()
                     })
         
-        # Обрабатываем слова
         if hasattr(transcription, 'words') and transcription.words:
             for word in transcription.words:
                 if hasattr(word, 'start'):
-                    # Объект с атрибутами
                     words.append({
                         "word": word.word.strip(),
                         "start": word.start,
                         "end": word.end
                     })
                 elif isinstance(word, dict):
-                    # Словарь
                     words.append({
                         "word": word['word'].strip(),
                         "start": word['start'],
                         "end": word['end']
                     })
         
-        return {
+        result = {
             "full_text": transcription.text if hasattr(transcription, 'text') else '',
             "segments": segments,
             "words": words,
             "language": transcription.language if hasattr(transcription, 'language') else language
         }
         
+        logger.info(f"✅ Transcription completed: {len(segments)} segments, {len(words)} words")
+        return result
+        
     except Exception as e:
-        print(f"Transcription error: {e}")
+        logger.error(f"Transcription failed: {e}")
         raise Exception(f"Failed to transcribe video: {str(e)}")
 
 async def analyze_best_moments_with_gpt(transcript: Dict, video_duration: float) -> List[Dict]:
     """ChatGPT анализирует лучшие моменты для клипов"""
     try:
+        logger.info("Starting GPT analysis...")
+        
         full_text = transcript["full_text"]
         segments = transcript["segments"]
         
-        # Создаем детальный промпт для анализа
         segments_text = "\n".join([
             f"{seg['start']:.1f}s-{seg['end']:.1f}s: {seg['text']}"
             for seg in segments
@@ -227,25 +300,28 @@ async def analyze_best_moments_with_gpt(transcript: Dict, video_duration: float)
         )
         
         analysis_text = response.choices[0].message.content
+        logger.info(f"GPT response: {analysis_text[:200]}...")
         
         try:
             analysis_data = json.loads(analysis_text)
-            return analysis_data.get("clips", [])
-        except json.JSONDecodeError:
-            # Fallback: создаем базовые клипы
+            clips = analysis_data.get("clips", [])
+            logger.info(f"✅ GPT analysis completed: {len(clips)} clips found")
+            return clips
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
             return create_fallback_clips(segments, video_duration)
             
     except Exception as e:
-        print(f"GPT analysis error: {e}")
+        logger.error(f"GPT analysis failed: {e}")
         return create_fallback_clips(transcript["segments"], video_duration)
 
 def create_fallback_clips(segments: List[Dict], video_duration: float) -> List[Dict]:
     """Создает базовые клипы если GPT анализ не сработал"""
+    logger.info("Creating fallback clips...")
     clips = []
     
-    # Берем первые несколько сегментов
     for i, segment in enumerate(segments[:3]):
-        if segment['end'] - segment['start'] >= 15:  # Минимум 15 секунд
+        if segment['end'] - segment['start'] >= 15:
             clips.append({
                 "start_time": segment['start'],
                 "end_time": min(segment['end'] + 10, video_duration),
@@ -256,36 +332,111 @@ def create_fallback_clips(segments: List[Dict], video_duration: float) -> List[D
                 "transcript_segment": segment['text']
             })
     
+    logger.info(f"✅ Created {len(clips)} fallback clips")
     return clips
 
-def cut_video_with_subtitles(video_path: str, start_time: float, end_time: float, 
-                           transcript_segment: str, caption_style: str, 
-                           output_path: str, aspect_ratio: str = "9:16") -> bool:
-    """Нарезает видео и добавляет субтитры"""
+def cut_video_with_ffmpeg(video_path: str, start_time: float, end_time: float, 
+                         transcript_segment: str, caption_style: str, 
+                         output_path: str, aspect_ratio: str = "9:16") -> bool:
+    """Нарезает видео и добавляет субтитры через FFmpeg"""
     try:
-        # Загружаем видео
+        logger.info(f"Cutting video with FFmpeg: {start_time}-{end_time}s")
+        
+        # Создаем временный файл субтитров
+        srt_path = output_path.replace('.mp4', '.srt')
+        
+        # Создаем SRT файл
+        with open(srt_path, 'w', encoding='utf-8') as f:
+            f.write("1\n")
+            f.write(f"00:00:00,000 --> {int((end_time-start_time)*1000//60000):02d}:{int((end_time-start_time)*1000//1000%60):02d},{int((end_time-start_time)*1000%1000):03d}\n")
+            f.write(f"{transcript_segment}\n")
+        
+        # Стили субтитров для FFmpeg
+        styles = {
+            "beasty": "FontSize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2",
+            "karaoke": "FontSize=26,PrimaryColour=&H00ffff,OutlineColour=&H0000ff,Outline=2",
+            "deep_diver": "FontSize=22,PrimaryColour=&Hffff80,OutlineColour=&H800080,Outline=2",
+            "youshael": "FontSize=28,PrimaryColour=&H00d7ff,OutlineColour=&H000000,Outline=3"
+        }
+        
+        style = styles.get(caption_style, styles["beasty"])
+        
+        # FFmpeg команда для нарезки и добавления субтитров
+        if aspect_ratio == "9:16":
+            # Кроп в 9:16 и добавление субтитров
+            cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(end_time - start_time),
+                '-vf', f'crop=ih*9/16:ih,scale=1080:1920,subtitles={srt_path}:force_style=\'{style}\'',
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-b:v', '8000k',
+                '-r', '30',
+                '-y', output_path
+            ]
+        else:
+            # Обычная нарезка с субтитрами
+            cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(end_time - start_time),
+                '-vf', f'subtitles={srt_path}:force_style=\'{style}\'',
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-y', output_path
+            ]
+        
+        logger.info(f"FFmpeg command: {' '.join(cmd)}")
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # Удаляем временный SRT файл
+        if os.path.exists(srt_path):
+            os.remove(srt_path)
+        
+        if result.returncode == 0:
+            logger.info(f"✅ Video cut successful: {output_path}")
+            return True
+        else:
+            logger.error(f"FFmpeg cutting error: {result.stderr}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Video cutting failed: {e}")
+        return False
+
+def cut_video_with_moviepy(video_path: str, start_time: float, end_time: float, 
+                          transcript_segment: str, caption_style: str, 
+                          output_path: str, aspect_ratio: str = "9:16") -> bool:
+    """Fallback: нарезает видео через MoviePy"""
+    try:
+        logger.info("Trying MoviePy for video cutting...")
+        from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+        
+        # Загружаем и обрезаем видео
         video = VideoFileClip(video_path).subclip(start_time, end_time)
         
-        # Изменяем соотношение сторон для 9:16
+        # Кроп в 9:16 если нужно
         if aspect_ratio == "9:16":
-            # Обрезаем по центру для вертикального формата
-            target_width = int(video.h * 9 / 16)
-            if target_width <= video.w:
-                # Обрезаем ширину
+            target_aspect = 9 / 16
+            current_aspect = video.w / video.h
+            
+            if current_aspect > target_aspect:
+                new_width = int(video.h * target_aspect)
                 x_center = video.w / 2
-                x1 = int(x_center - target_width / 2)
-                x2 = int(x_center + target_width / 2)
+                x1 = int(x_center - new_width / 2)
+                x2 = int(x_center + new_width / 2)
                 video = video.crop(x1=x1, x2=x2)
-            else:
-                # Добавляем черные полосы
-                video = video.resize(height=int(target_width * 16 / 9))
+            
+            video = video.resize((1080, 1920))
         
         # Стили субтитров
         caption_styles = {
-            "beasty": {"fontsize": 60, "color": "white", "stroke_color": "black", "stroke_width": 3},
-            "karaoke": {"fontsize": 65, "color": "yellow", "stroke_color": "red", "stroke_width": 2},
-            "deep_diver": {"fontsize": 55, "color": "lightblue", "stroke_color": "darkblue", "stroke_width": 2},
-            "youshael": {"fontsize": 70, "color": "gold", "stroke_color": "black", "stroke_width": 4}
+            "beasty": {"fontsize": 80, "color": "white", "stroke_color": "black", "stroke_width": 4},
+            "karaoke": {"fontsize": 85, "color": "yellow", "stroke_color": "red", "stroke_width": 3},
+            "deep_diver": {"fontsize": 75, "color": "lightblue", "stroke_color": "darkblue", "stroke_width": 3},
+            "youshael": {"fontsize": 90, "color": "gold", "stroke_color": "black", "stroke_width": 5}
         }
         
         style = caption_styles.get(caption_style, caption_styles["beasty"])
@@ -299,8 +450,9 @@ def cut_video_with_subtitles(video_path: str, start_time: float, end_time: float
             stroke_width=style["stroke_width"],
             font="Arial-Bold",
             method="caption",
-            size=(video.w * 0.8, None)
-        ).set_position(("center", "bottom")).set_duration(video.duration)
+            size=(video.w * 0.9, None),
+            align="center"
+        ).set_position(("center", 0.8), relative=True).set_duration(video.duration)
         
         # Композитное видео
         final_video = CompositeVideoClip([video, subtitle])
@@ -310,8 +462,8 @@ def cut_video_with_subtitles(video_path: str, start_time: float, end_time: float
             output_path,
             codec="libx264",
             audio_codec="aac",
-            temp_audiofile="temp-audio.m4a",
-            remove_temp=True,
+            bitrate="8000k",
+            fps=30,
             verbose=False,
             logger=None
         )
@@ -321,16 +473,19 @@ def cut_video_with_subtitles(video_path: str, start_time: float, end_time: float
         subtitle.close()
         final_video.close()
         
+        logger.info(f"✅ MoviePy cutting successful: {output_path}")
         return True
         
     except Exception as e:
-        print(f"Video cutting error: {e}")
+        logger.error(f"MoviePy cutting failed: {e}")
         return False
 
 @app.post("/api/videos/analyze")
 async def analyze_video(file: UploadFile = File(...), language: str = Form("en")):
     """Загрузка и анализ видео"""
     try:
+        logger.info(f"Analyzing video: {file.filename}")
+        
         # Создаем уникальный ID задачи
         task_id = str(uuid.uuid4())
         
@@ -342,6 +497,8 @@ async def analyze_video(file: UploadFile = File(...), language: str = Form("en")
         async with aiofiles.open(video_path, 'wb') as f:
             content = await file.read()
             await f.write(content)
+        
+        logger.info(f"Video saved: {video_path}")
         
         # Инициализируем задачу
         tasks[task_id] = {
@@ -358,18 +515,24 @@ async def analyze_video(file: UploadFile = File(...), language: str = Form("en")
         return {"task_id": task_id, "status": "processing"}
         
     except Exception as e:
+        logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 async def process_video_analysis(task_id: str, video_path: str, language: str):
     """Фоновая обработка анализа видео"""
     try:
+        logger.info(f"Processing video analysis for task {task_id}")
+        
         # Обновляем прогресс
         tasks[task_id]["progress"] = 10
         
-        # Извлекаем аудио
+        # Извлекаем аудио (пробуем FFmpeg, потом MoviePy)
         audio_path = AUDIO_DIR / f"{task_id}.wav"
-        if not extract_audio_from_video(video_path, str(audio_path)):
-            raise Exception("Failed to extract audio")
+        
+        if not extract_audio_with_ffmpeg(video_path, str(audio_path)):
+            logger.info("FFmpeg failed, trying MoviePy...")
+            if not extract_audio_with_moviepy(video_path, str(audio_path)):
+                raise Exception("Failed to extract audio with both methods")
         
         tasks[task_id]["progress"] = 30
         
@@ -379,9 +542,15 @@ async def process_video_analysis(task_id: str, video_path: str, language: str):
         tasks[task_id]["progress"] = 70
         
         # Получаем длительность видео
-        video = VideoFileClip(video_path)
-        video_duration = video.duration
-        video.close()
+        try:
+            result = subprocess.run(['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', video_path], capture_output=True, text=True)
+            video_duration = float(result.stdout.strip())
+        except:
+            # Fallback через MoviePy
+            from moviepy.editor import VideoFileClip
+            video = VideoFileClip(video_path)
+            video_duration = video.duration
+            video.close()
         
         # Анализируем лучшие моменты
         best_moments = await analyze_best_moments_with_gpt(transcript, video_duration)
@@ -392,11 +561,14 @@ async def process_video_analysis(task_id: str, video_path: str, language: str):
         tasks[task_id]["status"] = "completed"
         tasks[task_id]["progress"] = 100
         
+        logger.info(f"✅ Analysis completed for task {task_id}")
+        
         # Удаляем временный аудио файл
         if audio_path.exists():
             audio_path.unlink()
             
     except Exception as e:
+        logger.error(f"Analysis failed for task {task_id}: {e}")
         tasks[task_id]["status"] = "error"
         tasks[task_id]["error"] = str(e)
 
@@ -417,13 +589,16 @@ async def generate_clips(task_id: str, caption_style: str = Form("beasty")):
     if tasks[task_id]["status"] != "completed":
         raise HTTPException(status_code=400, detail="Video analysis not completed")
     
+    logger.info(f"Generating clips for task {task_id}")
+    
     # Создаем задачу генерации
     generation_task_id = str(uuid.uuid4())
     generation_tasks[generation_task_id] = {
         "status": "processing",
         "progress": 0,
         "created_at": datetime.now().isoformat(),
-        "clips": []
+        "clips": [],
+        "logs": []
     }
     
     # Запускаем генерацию в фоне
@@ -434,26 +609,34 @@ async def generate_clips(task_id: str, caption_style: str = Form("beasty")):
     return {"generation_task_id": generation_task_id, "status": "processing"}
 
 async def process_clips_generation(generation_task_id: str, task_id: str, caption_style: str):
-    """Фоновая генерация клипов"""
+    """Фоновая генерация клипов с улучшенным логированием"""
     try:
+        logger.info(f"Starting clips generation for {generation_task_id}")
+        
         task_data = tasks[task_id]
         video_path = task_data["file_path"]
         best_moments = task_data["best_moments"]
+        
+        generation_tasks[generation_task_id]["logs"].append(f"Found {len(best_moments)} moments to process")
         
         clips = []
         total_clips = len(best_moments)
         
         for i, moment in enumerate(best_moments):
+            logger.info(f"Processing clip {i+1}/{total_clips}: {moment['title']}")
+            
             # Обновляем прогресс
             progress = int((i / total_clips) * 100)
             generation_tasks[generation_task_id]["progress"] = progress
+            generation_tasks[generation_task_id]["logs"].append(f"Processing clip {i+1}: {moment['title']}")
             
             # Создаем клип
             clip_id = str(uuid.uuid4())
             clip_filename = f"clip_{clip_id}.mp4"
             clip_path = CLIPS_DIR / clip_filename
             
-            success = cut_video_with_subtitles(
+            # Пробуем FFmpeg, потом MoviePy
+            success = cut_video_with_ffmpeg(
                 video_path=video_path,
                 start_time=moment["start_time"],
                 end_time=moment["end_time"],
@@ -463,7 +646,20 @@ async def process_clips_generation(generation_task_id: str, task_id: str, captio
                 aspect_ratio="9:16"
             )
             
-            if success:
+            if not success:
+                logger.info("FFmpeg failed, trying MoviePy...")
+                generation_tasks[generation_task_id]["logs"].append(f"FFmpeg failed for clip {i+1}, trying MoviePy...")
+                success = cut_video_with_moviepy(
+                    video_path=video_path,
+                    start_time=moment["start_time"],
+                    end_time=moment["end_time"],
+                    transcript_segment=moment["transcript_segment"],
+                    caption_style=caption_style,
+                    output_path=str(clip_path),
+                    aspect_ratio="9:16"
+                )
+            
+            if success and clip_path.exists():
                 clips.append({
                     "clip_id": clip_id,
                     "title": moment["title"],
@@ -473,15 +669,25 @@ async def process_clips_generation(generation_task_id: str, task_id: str, captio
                     "file_path": str(clip_path),
                     "download_url": f"/api/clips/{clip_id}/download"
                 })
+                generation_tasks[generation_task_id]["logs"].append(f"✅ Clip {i+1} created successfully")
+                logger.info(f"✅ Clip {i+1} created: {clip_path}")
+            else:
+                generation_tasks[generation_task_id]["logs"].append(f"❌ Failed to create clip {i+1}")
+                logger.error(f"❌ Failed to create clip {i+1}")
         
         # Завершаем генерацию
         generation_tasks[generation_task_id]["status"] = "completed"
         generation_tasks[generation_task_id]["progress"] = 100
         generation_tasks[generation_task_id]["clips"] = clips
+        generation_tasks[generation_task_id]["logs"].append(f"✅ Generation completed: {len(clips)} clips created")
+        
+        logger.info(f"✅ Generation completed: {len(clips)} clips created")
         
     except Exception as e:
+        logger.error(f"Generation failed: {e}")
         generation_tasks[generation_task_id]["status"] = "error"
         generation_tasks[generation_task_id]["error"] = str(e)
+        generation_tasks[generation_task_id]["logs"].append(f"❌ Generation failed: {str(e)}")
 
 @app.get("/api/clips/generation/{generation_task_id}/status")
 async def get_generation_status(generation_task_id: str):
