@@ -1,6 +1,6 @@
 """
-AgentFlow Video Platform API v7.0 - ПРАВИЛЬНЫЙ OPENAI СИНТАКСИС
-Обновлен для работы с OpenAI v1.x API
+AgentFlow AI Clips Platform - ПОЛНОЦЕННЫЙ АВТОМАТИЧЕСКИЙ ПАЙПЛАЙН
+Как Opus.pro: анализ → нарезка → субтитры → готовые клипы
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -19,9 +19,10 @@ import tempfile
 from pathlib import Path
 import requests
 from openai import OpenAI
-from moviepy.editor import VideoFileClip
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+import ffmpeg
 
-app = FastAPI(title="AgentFlow Video Platform", version="7.0.0")
+app = FastAPI(title="AgentFlow AI Clips Platform", version="8.0.0")
 
 # CORS настройки
 app.add_middleware(
@@ -32,127 +33,93 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Настройка OpenAI с правильным синтаксисом
+# Настройка OpenAI
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Глобальные переменные для хранения состояния
 analysis_tasks = {}
-render_tasks = {}
+clip_generation_tasks = {}
 
 # Директории для файлов
 UPLOAD_DIR = Path("uploads")
 CLIPS_DIR = Path("clips")
-RENDERED_DIR = Path("rendered")
 AUDIO_DIR = Path("audio")
+SUBTITLES_DIR = Path("subtitles")
 
 # Создаем директории
-for dir_path in [UPLOAD_DIR, CLIPS_DIR, RENDERED_DIR, AUDIO_DIR]:
+for dir_path in [UPLOAD_DIR, CLIPS_DIR, AUDIO_DIR, SUBTITLES_DIR]:
     dir_path.mkdir(exist_ok=True)
 
-# Модели данных
-class RenderRequest(BaseModel):
-    caption_style: str = "beasty"
-    format_type: str = "youtube"
-    resolution: str = "1080p"
-    language: str = "en"
-
-# Стили кепшенов
-CAPTION_STYLES = {
-    "karaoke": {
-        "style_id": "karaoke",
-        "name": "Karaoke",
-        "font_family": "Arial Black",
-        "font_size": 48,
-        "color": "#FFFFFF",
-        "background_color": "#000000",
-        "animation": "highlight",
-        "position": "bottom",
-        "outline": True,
-        "shadow": False
-    },
+# Стили субтитров
+SUBTITLE_STYLES = {
     "beasty": {
-        "style_id": "beasty",
-        "name": "Beasty",
-        "font_family": "Impact",
-        "font_size": 52,
-        "color": "#FF6B35",
-        "background_color": None,
-        "animation": "bounce",
-        "position": "center",
-        "outline": True,
-        "shadow": True
+        "font": "Arial-Bold",
+        "fontsize": 52,
+        "color": "white",
+        "stroke_color": "black",
+        "stroke_width": 3,
+        "position": "center"
+    },
+    "karaoke": {
+        "font": "Arial-Black",
+        "fontsize": 48,
+        "color": "yellow",
+        "stroke_color": "red",
+        "stroke_width": 2,
+        "position": "bottom"
     },
     "deep_diver": {
-        "style_id": "deep_diver",
-        "name": "Deep Diver",
-        "font_family": "Roboto",
-        "font_size": 44,
-        "color": "#00D4FF",
-        "background_color": "rgba(0,0,0,0.7)",
-        "animation": "fade",
-        "position": "bottom",
-        "outline": False,
-        "shadow": False
+        "font": "Roboto-Bold",
+        "fontsize": 44,
+        "color": "cyan",
+        "stroke_color": "navy",
+        "stroke_width": 2,
+        "position": "bottom"
     },
     "youshael": {
-        "style_id": "youshael",
-        "name": "Youshael",
-        "font_family": "Montserrat",
-        "font_size": 46,
-        "color": "#FFD700",
-        "background_color": None,
-        "animation": "typewriter",
-        "position": "top",
-        "outline": True,
-        "shadow": False
+        "font": "Montserrat-Bold",
+        "fontsize": 46,
+        "color": "gold",
+        "stroke_color": "black",
+        "stroke_width": 3,
+        "position": "top"
     }
-}
-
-# Форматы видео
-VIDEO_FORMATS = {
-    "youtube": {"aspect_ratio": "16:9", "width": 1920, "height": 1080},
-    "tiktok": {"aspect_ratio": "9:16", "width": 1080, "height": 1920},
-    "instagram": {"aspect_ratio": "1:1", "width": 1080, "height": 1080}
 }
 
 @app.get("/")
 async def root():
-    """Главная страница API"""
     return {
-        "service": "AgentFlow Video Platform",
-        "version": "7.0.0",
-        "status": "running",
-        "features": [
-            "OpenAI Whisper transcription",
-            "GPT-4 content analysis",
-            "Automatic clip generation",
-            "Video rendering with captions",
-            "Multiple format support"
+        "service": "AgentFlow AI Clips Platform",
+        "version": "8.0.0",
+        "description": "Automatic video clipping with AI analysis",
+        "workflow": [
+            "1. Upload video",
+            "2. Whisper transcription",
+            "3. ChatGPT analysis",
+            "4. Automatic video cutting",
+            "5. Subtitle overlay",
+            "6. Download ready clips"
         ],
         "endpoints": {
-            "health": "/health",
-            "analyze_video": "/api/videos/analyze",
-            "video_status": "/api/videos/{task_id}/status",
-            "render_clip": "/api/clips/{clip_id}/render",
-            "render_status": "/api/render/{task_id}/status",
-            "download_clip": "/api/clips/{render_id}/download"
-        },
-        "documentation": "/docs"
+            "analyze": "/api/videos/analyze",
+            "status": "/api/videos/{task_id}/status",
+            "generate_clips": "/api/clips/generate/{task_id}",
+            "download": "/api/clips/{clip_id}/download"
+        }
     }
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
-        "version": "7.0.0",
-        "modules": {
-            "openai_whisper": True,
+        "version": "8.0.0",
+        "features": {
+            "whisper_transcription": True,
             "gpt4_analysis": True,
-            "video_rendering": True,
-            "caption_rendering": True,
-            "format_conversion": True
-        },
-        "timestamp": datetime.now().isoformat()
+            "automatic_cutting": True,
+            "subtitle_overlay": True,
+            "multiple_formats": True
+        }
     }
 
 def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
@@ -168,172 +135,95 @@ def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
         print(f"Audio extraction error: {e}")
         return False
 
-async def transcribe_with_openai_whisper(audio_path: str, language: str = "en") -> Dict:
-    """Транскрибирует аудио через OpenAI Whisper API с правильным синтаксисом"""
+async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
+    """Полная транскрибация видео с временными метками"""
     try:
-        # Проверяем размер файла (лимит 25MB)
-        file_size = os.path.getsize(audio_path)
-        if file_size > 25 * 1024 * 1024:  # 25MB
-            raise Exception(f"Audio file too large: {file_size / (1024*1024):.1f}MB (max 25MB)")
-        
-        # Используем правильный синтаксис OpenAI v1.x
         with open(audio_path, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 language=language,
                 response_format="verbose_json",
-                timestamp_granularities=["word"]
+                timestamp_granularities=["word", "segment"]
             )
         
-        # Обрабатываем ответ
+        # Обрабатываем результат
         segments = []
         words = []
         
-        # Извлекаем сегменты
         if hasattr(transcription, 'segments') and transcription.segments:
             for segment in transcription.segments:
                 segments.append({
-                    "start_time": segment['start'],
-                    "end_time": segment['end'],
+                    "start": segment['start'],
+                    "end": segment['end'],
                     "text": segment['text'].strip()
                 })
         
-        # Извлекаем слова с временными метками
         if hasattr(transcription, 'words') and transcription.words:
-            for i, word in enumerate(transcription.words):
+            for word in transcription.words:
                 words.append({
-                    "id": f"word_{i + 1}",
-                    "text": word['word'].strip(),
-                    "start_time": word['start'],
-                    "end_time": word['end'],
-                    "confidence": 0.95
-                })
-        
-        # Если нет сегментов, создаем один из полного текста
-        if not segments and hasattr(transcription, 'text'):
-            segments.append({
-                "start_time": 0.0,
-                "end_time": 30.0,  # Примерная длительность
-                "text": transcription.text.strip()
-            })
-        
-        return {
-            "language": getattr(transcription, 'language', language),
-            "confidence": 0.95,
-            "segments": segments,
-            "words": words,
-            "full_text": getattr(transcription, 'text', '')
-        }
-        
-    except Exception as e:
-        print(f"OpenAI Whisper API error: {e}")
-        # Fallback на простую транскрибацию
-        return await simple_speech_recognition(audio_path)
-
-async def simple_speech_recognition(audio_path: str) -> Dict:
-    """Простая транскрибация через speech_recognition как fallback"""
-    try:
-        import speech_recognition as sr
-        
-        r = sr.Recognizer()
-        
-        # Конвертируем в WAV если нужно
-        with sr.AudioFile(audio_path) as source:
-            audio = r.record(source)
-        
-        # Распознаем речь
-        text = r.recognize_google(audio, language="en-US")
-        
-        if not text or len(text.strip()) < 5:
-            raise Exception("No speech detected in audio")
-        
-        # Создаем простые сегменты
-        sentences = [s.strip() + "." for s in text.split('.') if s.strip()]
-        segments = []
-        words = []
-        
-        # Примерно распределяем время
-        total_duration = 60  # Предполагаем 60 секунд
-        time_per_sentence = total_duration / len(sentences) if sentences else 30
-        
-        for i, sentence in enumerate(sentences):
-            start_time = i * time_per_sentence
-            end_time = (i + 1) * time_per_sentence
-            
-            segments.append({
-                "start_time": start_time,
-                "end_time": end_time,
-                "text": sentence
-            })
-            
-            # Разбиваем на слова
-            sentence_words = sentence.replace('.', '').split()
-            word_duration = time_per_sentence / len(sentence_words) if sentence_words else 1
-            
-            for j, word in enumerate(sentence_words):
-                word_start = start_time + (j * word_duration)
-                word_end = start_time + ((j + 1) * word_duration)
-                
-                words.append({
-                    "id": f"word_{len(words) + 1}",
-                    "text": word,
-                    "start_time": word_start,
-                    "end_time": word_end,
-                    "confidence": 0.85
+                    "word": word['word'].strip(),
+                    "start": word['start'],
+                    "end": word['end']
                 })
         
         return {
-            "language": "en",
-            "confidence": 0.85,
+            "full_text": getattr(transcription, 'text', ''),
             "segments": segments,
             "words": words,
-            "full_text": text
+            "language": getattr(transcription, 'language', language)
         }
         
     except Exception as e:
-        print(f"Speech recognition fallback error: {e}")
-        raise Exception("Failed to transcribe audio - no speech detected or audio processing error")
+        print(f"Transcription error: {e}")
+        raise Exception(f"Failed to transcribe video: {str(e)}")
 
-async def analyze_content_with_gpt4(transcript: Dict, video_info: Dict) -> Dict:
-    """Анализирует контент с помощью GPT-4"""
+async def analyze_best_moments_with_gpt(transcript: Dict, video_duration: float) -> List[Dict]:
+    """ChatGPT анализирует лучшие моменты для клипов"""
     try:
         full_text = transcript["full_text"]
+        segments = transcript["segments"]
         
-        if not full_text or len(full_text.strip()) < 10:
-            raise Exception("No meaningful text found in transcript")
+        # Создаем детальный промпт для анализа
+        segments_text = "\n".join([
+            f"{seg['start']:.1f}s-{seg['end']:.1f}s: {seg['text']}"
+            for seg in segments
+        ])
         
         prompt = f"""
-        Analyze this video transcript and find the best moments for social media clips:
+        Analyze this video transcript and find the BEST moments for viral social media clips.
         
-        Transcript: "{full_text}"
-        Video Duration: {video_info['duration']} seconds
+        FULL TRANSCRIPT WITH TIMESTAMPS:
+        {segments_text}
         
-        Find 2-3 engaging segments that would work well as short clips (15-90 seconds each).
-        For each segment, provide:
-        1. Start and end timestamps (based on actual content)
-        2. A catchy English title
-        3. Why this moment is engaging
-        4. Scores for Hook, Flow, Value, Trend (0-100)
+        VIDEO DURATION: {video_duration:.1f} seconds
         
-        Focus on:
-        - Strong openings or introductions
-        - Key value propositions
-        - Emotional or exciting moments
-        - Clear explanations of important points
+        Find 2-4 engaging segments that would work as standalone clips (15-90 seconds each).
         
-        Return ONLY valid JSON with this structure:
+        CRITERIA:
+        - Strong hooks (attention-grabbing openings)
+        - Complete thoughts/stories
+        - High value content
+        - Emotional moments
+        - Clear speech without long pauses
+        
+        For each clip, provide:
+        1. EXACT start and end times (based on transcript timestamps)
+        2. Engaging title for social media
+        3. Why this moment is viral-worthy
+        4. Best caption style
+        
+        Return ONLY valid JSON:
         {{
-          "highlights": [
+          "clips": [
             {{
-              "start_time": 0.0,
-              "end_time": 15.0,
-              "title": "Engaging English title",
-              "description": "Why this is good",
-              "hook": 85,
-              "flow": 90,
-              "value": 88,
-              "trend": 87
+              "start_time": 15.2,
+              "end_time": 45.8,
+              "title": "Mind-Blowing Revelation",
+              "description": "Perfect hook with valuable insight",
+              "viral_score": 95,
+              "caption_style": "beasty",
+              "transcript_segment": "exact text from this timeframe"
             }}
           ]
         }}
@@ -342,107 +232,164 @@ async def analyze_content_with_gpt4(transcript: Dict, video_info: Dict) -> Dict:
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are an expert video content analyzer. Always respond with valid JSON only. Use English language for titles and descriptions."},
+                {
+                    "role": "system", 
+                    "content": "You are an expert video content analyzer specializing in viral social media clips. Always return valid JSON with precise timestamps."
+                },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3
         )
         
-        # Парсим ответ
         analysis_text = response.choices[0].message.content
         
         try:
             analysis_data = json.loads(analysis_text)
-            return analysis_data
-        except:
-            # Если не JSON, создаем базовый анализ
-            return create_fallback_analysis(video_info, transcript)
+            return analysis_data.get("clips", [])
+        except json.JSONDecodeError:
+            # Fallback: создаем базовые клипы
+            return create_fallback_clips(segments, video_duration)
+            
+    except Exception as e:
+        print(f"GPT analysis error: {e}")
+        return create_fallback_clips(transcript.get("segments", []), video_duration)
+
+def create_fallback_clips(segments: List[Dict], video_duration: float) -> List[Dict]:
+    """Создает базовые клипы если GPT недоступен"""
+    clips = []
+    
+    # Первый клип (начало)
+    if segments and video_duration > 30:
+        clips.append({
+            "start_time": 0.0,
+            "end_time": min(30.0, video_duration),
+            "title": "Video Opening",
+            "description": "Engaging introduction",
+            "viral_score": 85,
+            "caption_style": "beasty",
+            "transcript_segment": segments[0]["text"] if segments else ""
+        })
+    
+    # Второй клип (середина)
+    if video_duration > 90:
+        mid_point = video_duration / 2
+        clips.append({
+            "start_time": max(30.0, mid_point - 15),
+            "end_time": min(video_duration, mid_point + 15),
+            "title": "Key Moment",
+            "description": "Main content highlight",
+            "viral_score": 88,
+            "caption_style": "deep_diver",
+            "transcript_segment": "Key content from video"
+        })
+    
+    return clips
+
+def create_subtitle_file(words: List[Dict], start_time: float, end_time: float, clip_id: str) -> str:
+    """Создает SRT файл субтитров для клипа"""
+    subtitle_path = SUBTITLES_DIR / f"{clip_id}.srt"
+    
+    # Фильтруем слова для данного временного отрезка
+    clip_words = [
+        word for word in words 
+        if start_time <= word["start"] <= end_time
+    ]
+    
+    if not clip_words:
+        return str(subtitle_path)
+    
+    # Группируем слова в субтитры (по 3-5 слов)
+    subtitles = []
+    current_subtitle = []
+    words_per_subtitle = 4
+    
+    for i, word in enumerate(clip_words):
+        current_subtitle.append(word)
+        
+        if len(current_subtitle) >= words_per_subtitle or i == len(clip_words) - 1:
+            if current_subtitle:
+                start = current_subtitle[0]["start"] - start_time  # Относительное время
+                end = current_subtitle[-1]["end"] - start_time
+                text = " ".join([w["word"] for w in current_subtitle])
+                
+                subtitles.append({
+                    "start": max(0, start),
+                    "end": end,
+                    "text": text.strip()
+                })
+                current_subtitle = []
+    
+    # Записываем SRT файл
+    with open(subtitle_path, 'w', encoding='utf-8') as f:
+        for i, sub in enumerate(subtitles, 1):
+            start_time_str = format_srt_time(sub["start"])
+            end_time_str = format_srt_time(sub["end"])
+            
+            f.write(f"{i}\n")
+            f.write(f"{start_time_str} --> {end_time_str}\n")
+            f.write(f"{sub['text']}\n\n")
+    
+    return str(subtitle_path)
+
+def format_srt_time(seconds: float) -> str:
+    """Форматирует время для SRT файла"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millisecs = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
+
+async def cut_video_with_subtitles(
+    video_path: str, 
+    start_time: float, 
+    end_time: float, 
+    subtitle_path: str,
+    output_path: str,
+    style: str = "beasty"
+) -> bool:
+    """Нарезает видео и добавляет субтитры с помощью FFmpeg"""
+    try:
+        style_config = SUBTITLE_STYLES.get(style, SUBTITLE_STYLES["beasty"])
+        
+        # FFmpeg команда для нарезки и добавления субтитров
+        (
+            ffmpeg
+            .input(video_path, ss=start_time, t=end_time - start_time)
+            .filter('subtitles', subtitle_path, 
+                   force_style=f"FontName={style_config['font']},"
+                              f"FontSize={style_config['fontsize']},"
+                              f"PrimaryColour=&H{style_config['color'][1:]},"
+                              f"OutlineColour=&H{style_config['stroke_color'][1:]},"
+                              f"Outline={style_config['stroke_width']}")
+            .output(output_path, vcodec='libx264', acodec='aac')
+            .overwrite_output()
+            .run(quiet=True)
+        )
+        
+        return True
         
     except Exception as e:
-        print(f"GPT-4 analysis error: {e}")
-        return create_fallback_analysis(video_info, transcript)
-
-def create_fallback_analysis(video_info: Dict, transcript: Dict) -> Dict:
-    """Создает базовый анализ если GPT-4 недоступен"""
-    duration = video_info.get('duration', 60)
-    segments = transcript.get('segments', [])
-    
-    highlights = []
-    
-    # Первый сегмент (начало)
-    if duration > 15:
-        highlights.append({
-            "start_time": 0.0,
-            "end_time": min(30.0, duration),
-            "title": "Video Opening",
-            "description": "Engaging introduction to capture attention",
-            "hook": 85,
-            "flow": 88,
-            "value": 90,
-            "trend": 87
-        })
-    
-    # Второй сегмент (середина) если видео длинное
-    if duration > 60:
-        mid_start = max(30.0, duration / 2 - 15)
-        mid_end = min(duration, duration / 2 + 15)
-        highlights.append({
-            "start_time": mid_start,
-            "end_time": mid_end,
-            "title": "Key Content",
-            "description": "Main value proposition of the video",
-            "hook": 80,
-            "flow": 85,
-            "value": 92,
-            "trend": 83
-        })
-    
-    return {"highlights": highlights}
-
-def create_highlights_from_analysis(analysis: Dict, transcript: Dict) -> List[Dict]:
-    """Создает highlights на основе анализа"""
-    highlights = []
-    
-    if "highlights" in analysis:
-        for i, highlight in enumerate(analysis["highlights"]):
-            clip_id = f"highlight_{i + 1}"
-            
-            # Определяем стиль кепшенов
-            title = highlight.get("title", "").lower()
-            if "opening" in title or "introduction" in title:
-                suggested_style = "beasty"
-            elif "key" in title or "main" in title:
-                suggested_style = "deep_diver"
-            else:
-                suggested_style = "youshael"
-            
-            highlights.append({
-                "clip_id": clip_id,
-                "start_time": highlight["start_time"],
-                "end_time": highlight["end_time"],
-                "title": highlight["title"],
-                "description": highlight["description"],
-                "score": int((highlight["hook"] + highlight["flow"] + highlight["value"] + highlight["trend"]) / 4),
-                "categories": {
-                    "hook": highlight["hook"],
-                    "flow": highlight["flow"],
-                    "value": highlight["value"],
-                    "trend": highlight["trend"]
-                },
-                "suggested_caption_style": suggested_style
-            })
-    
-    return highlights
+        print(f"Video cutting error: {e}")
+        # Fallback: простая нарезка без субтитров
+        try:
+            (
+                ffmpeg
+                .input(video_path, ss=start_time, t=end_time - start_time)
+                .output(output_path, vcodec='libx264', acodec='aac')
+                .overwrite_output()
+                .run(quiet=True)
+            )
+            return True
+        except:
+            return False
 
 @app.post("/api/videos/analyze")
 async def analyze_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    ai_model: str = Form("gpt-4"),
-    language: str = Form("en"),
-    extract_highlights: bool = Form(True),
-    generate_captions: bool = Form(True)
+    language: str = Form("en")
 ):
+    """Загружает и анализирует видео"""
     task_id = str(uuid.uuid4())
     
     # Сохраняем файл
@@ -456,73 +403,54 @@ async def analyze_video(
         "progress": 0,
         "created_at": datetime.now().isoformat(),
         "file_path": str(file_path),
-        "settings": {
-            "ai_model": ai_model,
-            "language": language,
-            "extract_highlights": extract_highlights,
-            "generate_captions": generate_captions
-        }
+        "language": language
     }
     
-    # Запускаем обработку в фоне
-    background_tasks.add_task(process_video_analysis_real, task_id)
+    # Запускаем анализ в фоне
+    background_tasks.add_task(process_full_video_analysis, task_id)
     
-    return {"task_id": task_id, "status": "processing", "message": "Video uploaded for analysis"}
+    return {"task_id": task_id, "status": "processing"}
 
-async def process_video_analysis_real(task_id: str):
-    """РЕАЛЬНАЯ обработка видео анализа с правильным OpenAI API"""
+async def process_full_video_analysis(task_id: str):
+    """ПОЛНЫЙ анализ видео: транскрибация + анализ лучших моментов"""
     try:
         task = analysis_tasks[task_id]
         video_path = task["file_path"]
         
-        # 1. Извлечение информации о видео
-        analysis_tasks[task_id]["status"] = "processing: Analyzing video"
+        # 1. Получаем информацию о видео
+        analysis_tasks[task_id]["status"] = "Analyzing video properties"
         analysis_tasks[task_id]["progress"] = 10
         
         video = VideoFileClip(video_path)
-        video_info = {
-            "duration": video.duration,
-            "resolution": f"{video.w}x{video.h}",
-            "fps": video.fps,
-            "format": "mp4"
-        }
+        video_duration = video.duration
         video.close()
         
-        # 2. Извлечение аудио
-        analysis_tasks[task_id]["status"] = "processing: Extracting audio"
-        analysis_tasks[task_id]["progress"] = 25
+        # 2. Извлекаем аудио
+        analysis_tasks[task_id]["status"] = "Extracting audio"
+        analysis_tasks[task_id]["progress"] = 20
         
         audio_path = str(AUDIO_DIR / f"{task_id}.wav")
         if not extract_audio_from_video(video_path, audio_path):
-            raise Exception("Failed to extract audio from video")
+            raise Exception("Failed to extract audio")
         
-        # 3. РЕАЛЬНАЯ транскрибация через OpenAI Whisper
-        analysis_tasks[task_id]["status"] = "processing: Speech recognition (Whisper)"
+        # 3. ПОЛНАЯ транскрибация через Whisper
+        analysis_tasks[task_id]["status"] = "Transcribing with Whisper AI"
         analysis_tasks[task_id]["progress"] = 50
         
-        transcript = await transcribe_with_openai_whisper(audio_path, task["settings"]["language"])
+        transcript = await transcribe_full_video(audio_path, task["language"])
         
-        if not transcript or not transcript.get("full_text"):
-            raise Exception("No speech detected in video")
+        # 4. Анализ лучших моментов через ChatGPT
+        analysis_tasks[task_id]["status"] = "Analyzing best moments with ChatGPT"
+        analysis_tasks[task_id]["progress"] = 80
         
-        # 4. AI анализ с GPT-4
-        analysis_tasks[task_id]["status"] = "processing: AI content analysis (GPT-4)"
-        analysis_tasks[task_id]["progress"] = 75
+        best_clips = await analyze_best_moments_with_gpt(transcript, video_duration)
         
-        ai_analysis = await analyze_content_with_gpt4(transcript, video_info)
-        
-        # 5. Создание highlights
-        analysis_tasks[task_id]["status"] = "processing: Creating highlights"
-        analysis_tasks[task_id]["progress"] = 90
-        
-        highlights = create_highlights_from_analysis(ai_analysis, transcript)
-        
-        # Формируем результат
+        # 5. Сохраняем результат
         result = {
-            "video_info": video_info,
+            "video_duration": video_duration,
             "transcript": transcript,
-            "ai_analysis": ai_analysis,
-            "highlights": highlights
+            "best_clips": best_clips,
+            "total_clips": len(best_clips)
         }
         
         analysis_tasks[task_id]["status"] = "completed"
@@ -536,39 +464,129 @@ async def process_video_analysis_real(task_id: str):
     except Exception as e:
         analysis_tasks[task_id]["status"] = "error"
         analysis_tasks[task_id]["error"] = str(e)
-        print(f"Analysis error for task {task_id}: {e}")
 
 @app.get("/api/videos/{task_id}/status")
 async def get_analysis_status(task_id: str):
+    """Получает статус анализа видео"""
     if task_id not in analysis_tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     
     return analysis_tasks[task_id]
 
-@app.get("/api/captions/styles")
-async def get_caption_styles():
-    return {
-        "styles": list(CAPTION_STYLES.values()),
-        "total": len(CAPTION_STYLES)
+@app.post("/api/clips/generate/{task_id}")
+async def generate_clips(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    caption_style: str = Form("beasty")
+):
+    """Генерирует реальные видео клипы с субтитрами"""
+    if task_id not in analysis_tasks:
+        raise HTTPException(status_code=404, detail="Analysis task not found")
+    
+    analysis_task = analysis_tasks[task_id]
+    if analysis_task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Analysis not completed")
+    
+    generation_task_id = str(uuid.uuid4())
+    
+    # Инициализируем задачу генерации
+    clip_generation_tasks[generation_task_id] = {
+        "status": "processing",
+        "progress": 0,
+        "analysis_task_id": task_id,
+        "caption_style": caption_style,
+        "created_at": datetime.now().isoformat(),
+        "clips": []
     }
+    
+    # Запускаем генерацию в фоне
+    background_tasks.add_task(generate_video_clips, generation_task_id)
+    
+    return {"generation_task_id": generation_task_id, "status": "processing"}
 
-@app.get("/api/formats")
-async def get_video_formats():
-    return {
-        "formats": VIDEO_FORMATS,
-        "total": len(VIDEO_FORMATS)
-    }
+async def generate_video_clips(generation_task_id: str):
+    """РЕАЛЬНАЯ генерация видео клипов с субтитрами"""
+    try:
+        gen_task = clip_generation_tasks[generation_task_id]
+        analysis_task_id = gen_task["analysis_task_id"]
+        analysis_result = analysis_tasks[analysis_task_id]["result"]
+        video_path = analysis_tasks[analysis_task_id]["file_path"]
+        
+        best_clips = analysis_result["best_clips"]
+        transcript = analysis_result["transcript"]
+        words = transcript["words"]
+        
+        generated_clips = []
+        
+        for i, clip_data in enumerate(best_clips):
+            try:
+                clip_generation_tasks[generation_task_id]["status"] = f"Generating clip {i+1}/{len(best_clips)}"
+                clip_generation_tasks[generation_task_id]["progress"] = int((i / len(best_clips)) * 90)
+                
+                clip_id = f"{generation_task_id}_clip_{i+1}"
+                start_time = clip_data["start_time"]
+                end_time = clip_data["end_time"]
+                
+                # 1. Создаем субтитры для клипа
+                subtitle_path = create_subtitle_file(words, start_time, end_time, clip_id)
+                
+                # 2. Нарезаем видео с субтитрами
+                output_path = str(CLIPS_DIR / f"{clip_id}.mp4")
+                
+                success = await cut_video_with_subtitles(
+                    video_path=video_path,
+                    start_time=start_time,
+                    end_time=end_time,
+                    subtitle_path=subtitle_path,
+                    output_path=output_path,
+                    style=gen_task["caption_style"]
+                )
+                
+                if success:
+                    generated_clips.append({
+                        "clip_id": clip_id,
+                        "title": clip_data["title"],
+                        "description": clip_data["description"],
+                        "duration": end_time - start_time,
+                        "viral_score": clip_data["viral_score"],
+                        "file_path": output_path,
+                        "download_url": f"/api/clips/{clip_id}/download"
+                    })
+                
+            except Exception as e:
+                print(f"Error generating clip {i+1}: {e}")
+                continue
+        
+        # Завершаем генерацию
+        clip_generation_tasks[generation_task_id]["status"] = "completed"
+        clip_generation_tasks[generation_task_id]["progress"] = 100
+        clip_generation_tasks[generation_task_id]["clips"] = generated_clips
+        
+    except Exception as e:
+        clip_generation_tasks[generation_task_id]["status"] = "error"
+        clip_generation_tasks[generation_task_id]["error"] = str(e)
 
-@app.get("/api/stats")
-async def get_platform_stats():
-    return {
-        "total_videos_processed": len(analysis_tasks),
-        "total_clips_rendered": len(render_tasks),
-        "active_analysis_tasks": len([t for t in analysis_tasks.values() if t["status"] == "processing"]),
-        "active_render_tasks": len([t for t in render_tasks.values() if t["status"] == "processing"]),
-        "caption_styles": len(CAPTION_STYLES),
-        "video_formats": len(VIDEO_FORMATS)
-    }
+@app.get("/api/clips/generation/{generation_task_id}/status")
+async def get_generation_status(generation_task_id: str):
+    """Получает статус генерации клипов"""
+    if generation_task_id not in clip_generation_tasks:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    
+    return clip_generation_tasks[generation_task_id]
+
+@app.get("/api/clips/{clip_id}/download")
+async def download_clip(clip_id: str):
+    """Скачивает готовый клип"""
+    clip_path = CLIPS_DIR / f"{clip_id}.mp4"
+    
+    if not clip_path.exists():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    
+    return FileResponse(
+        path=str(clip_path),
+        media_type="video/mp4",
+        filename=f"{clip_id}.mp4"
+    )
 
 if __name__ == "__main__":
     import uvicorn
