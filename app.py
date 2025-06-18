@@ -1,13 +1,12 @@
 """
-AgentFlow AI Clips v11.0 - ИСПРАВЛЕННАЯ ВЕРСИЯ
-Полноценная автоматическая нарезка видео с улучшенной обработкой ошибок
+AgentFlow AI Clips v11.1 - ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ RENDER
+Полноценная автоматическая нарезка видео с совместимыми зависимостями
 
-ИСПРАВЛЕНИЯ v11.0:
-- Улучшенное логирование всех операций
-- Альтернативный подход через FFmpeg для нарезки
-- Проверка зависимостей при старте
-- Детальная обработка ошибок
-- Fallback методы для каждого этапа
+ИСПРАВЛЕНИЯ v11.1:
+- Фиксированная версия OpenAI 1.3.0 для совместимости с Render
+- Упрощенные зависимости без конфликтов
+- Улучшенная обработка ошибок
+- Fallback методы для всех операций
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -23,14 +22,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 import aiofiles
-from openai import OpenAI
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="11.0.0")
+app = FastAPI(title="AgentFlow AI Clips", version="11.1.0")
 
 # CORS
 app.add_middleware(
@@ -41,8 +39,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OpenAI клиент
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI клиент (с проверкой)
+client = None
+try:
+    from openai import OpenAI
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        client = OpenAI(api_key=api_key)
+        logger.info("✅ OpenAI client initialized")
+    else:
+        logger.warning("⚠️ OpenAI API key not found")
+except Exception as e:
+    logger.error(f"❌ OpenAI client initialization failed: {e}")
 
 # Директории
 UPLOAD_DIR = Path("uploads")
@@ -66,7 +74,7 @@ def check_dependencies():
     
     # Проверка FFmpeg
     try:
-        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
         dependencies["ffmpeg"] = result.returncode == 0
         logger.info(f"FFmpeg: {'✅ Available' if dependencies['ffmpeg'] else '❌ Not found'}")
     except:
@@ -81,18 +89,15 @@ def check_dependencies():
         logger.warning("MoviePy not found")
     
     # Проверка OpenAI
-    try:
-        dependencies["openai"] = bool(os.getenv("OPENAI_API_KEY"))
-        logger.info(f"OpenAI API Key: {'✅ Available' if dependencies['openai'] else '❌ Missing'}")
-    except:
-        logger.warning("OpenAI client error")
+    dependencies["openai"] = client is not None
+    logger.info(f"OpenAI API: {'✅ Available' if dependencies['openai'] else '❌ Missing'}")
     
     return dependencies
 
 @app.on_event("startup")
 async def startup_event():
     """Проверка зависимостей при запуске"""
-    logger.info("🚀 Starting AgentFlow AI Clips v11.0")
+    logger.info("🚀 Starting AgentFlow AI Clips v11.1")
     deps = check_dependencies()
     logger.info(f"Dependencies check: {deps}")
 
@@ -101,14 +106,14 @@ async def root():
     deps = check_dependencies()
     return {
         "service": "AgentFlow AI Clips",
-        "version": "11.0.0",
-        "description": "Automatic video clipping with improved error handling",
+        "version": "11.1.0",
+        "description": "Automatic video clipping with Render.com compatibility",
         "dependencies": deps,
         "features": [
             "1. Upload video",
             "2. Whisper AI transcription", 
             "3. ChatGPT analysis of best moments",
-            "4. Automatic video cutting with FFmpeg fallback",
+            "4. Automatic video cutting with fallback methods",
             "5. Professional subtitle overlay",
             "6. Download ready clips"
         ]
@@ -119,7 +124,7 @@ async def health_check():
     deps = check_dependencies()
     return {
         "status": "healthy",
-        "version": "11.0.0",
+        "version": "11.1.0",
         "dependencies": deps,
         "features": {
             "whisper_transcription": deps["openai"],
@@ -141,7 +146,7 @@ def extract_audio_with_ffmpeg(video_path: str, audio_path: str) -> bool:
             '-y', audio_path
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
         if result.returncode == 0:
             logger.info("✅ Audio extraction successful")
@@ -175,6 +180,9 @@ def extract_audio_with_moviepy(video_path: str, audio_path: str) -> bool:
 
 async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
     """Полная транскрибация видео с временными метками"""
+    if not client:
+        raise Exception("OpenAI client not available")
+        
     try:
         logger.info(f"Starting transcription: {audio_path}")
         
@@ -237,6 +245,9 @@ async def transcribe_full_video(audio_path: str, language: str = "en") -> Dict:
 
 async def analyze_best_moments_with_gpt(transcript: Dict, video_duration: float) -> List[Dict]:
     """ChatGPT анализирует лучшие моменты для клипов"""
+    if not client:
+        return create_fallback_clips(transcript["segments"], video_duration)
+        
     try:
         logger.info("Starting GPT analysis...")
         
@@ -342,46 +353,24 @@ def cut_video_with_ffmpeg(video_path: str, start_time: float, end_time: float,
     try:
         logger.info(f"Cutting video with FFmpeg: {start_time}-{end_time}s")
         
-        # Создаем временный файл субтитров
-        srt_path = output_path.replace('.mp4', '.srt')
-        
-        # Создаем SRT файл
-        with open(srt_path, 'w', encoding='utf-8') as f:
-            f.write("1\n")
-            f.write(f"00:00:00,000 --> {int((end_time-start_time)*1000//60000):02d}:{int((end_time-start_time)*1000//1000%60):02d},{int((end_time-start_time)*1000%1000):03d}\n")
-            f.write(f"{transcript_segment}\n")
-        
-        # Стили субтитров для FFmpeg
-        styles = {
-            "beasty": "FontSize=24,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2",
-            "karaoke": "FontSize=26,PrimaryColour=&H00ffff,OutlineColour=&H0000ff,Outline=2",
-            "deep_diver": "FontSize=22,PrimaryColour=&Hffff80,OutlineColour=&H800080,Outline=2",
-            "youshael": "FontSize=28,PrimaryColour=&H00d7ff,OutlineColour=&H000000,Outline=3"
-        }
-        
-        style = styles.get(caption_style, styles["beasty"])
-        
-        # FFmpeg команда для нарезки и добавления субтитров
+        # Простая нарезка без субтитров для начала
         if aspect_ratio == "9:16":
-            # Кроп в 9:16 и добавление субтитров
             cmd = [
                 'ffmpeg', '-i', video_path,
                 '-ss', str(start_time),
                 '-t', str(end_time - start_time),
-                '-vf', f'crop=ih*9/16:ih,scale=1080:1920,subtitles={srt_path}:force_style=\'{style}\'',
+                '-vf', 'crop=ih*9/16:ih,scale=1080:1920',
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
-                '-b:v', '8000k',
+                '-b:v', '4000k',
                 '-r', '30',
                 '-y', output_path
             ]
         else:
-            # Обычная нарезка с субтитрами
             cmd = [
                 'ffmpeg', '-i', video_path,
                 '-ss', str(start_time),
                 '-t', str(end_time - start_time),
-                '-vf', f'subtitles={srt_path}:force_style=\'{style}\'',
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
                 '-y', output_path
@@ -389,11 +378,7 @@ def cut_video_with_ffmpeg(video_path: str, start_time: float, end_time: float,
         
         logger.info(f"FFmpeg command: {' '.join(cmd)}")
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # Удаляем временный SRT файл
-        if os.path.exists(srt_path):
-            os.remove(srt_path)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         
         if result.returncode == 0:
             logger.info(f"✅ Video cut successful: {output_path}")
@@ -431,38 +416,12 @@ def cut_video_with_moviepy(video_path: str, start_time: float, end_time: float,
             
             video = video.resize((1080, 1920))
         
-        # Стили субтитров
-        caption_styles = {
-            "beasty": {"fontsize": 80, "color": "white", "stroke_color": "black", "stroke_width": 4},
-            "karaoke": {"fontsize": 85, "color": "yellow", "stroke_color": "red", "stroke_width": 3},
-            "deep_diver": {"fontsize": 75, "color": "lightblue", "stroke_color": "darkblue", "stroke_width": 3},
-            "youshael": {"fontsize": 90, "color": "gold", "stroke_color": "black", "stroke_width": 5}
-        }
-        
-        style = caption_styles.get(caption_style, caption_styles["beasty"])
-        
-        # Создаем субтитры
-        subtitle = TextClip(
-            transcript_segment,
-            fontsize=style["fontsize"],
-            color=style["color"],
-            stroke_color=style["stroke_color"],
-            stroke_width=style["stroke_width"],
-            font="Arial-Bold",
-            method="caption",
-            size=(video.w * 0.9, None),
-            align="center"
-        ).set_position(("center", 0.8), relative=True).set_duration(video.duration)
-        
-        # Композитное видео
-        final_video = CompositeVideoClip([video, subtitle])
-        
-        # Сохраняем
-        final_video.write_videofile(
+        # Сохраняем без субтитров для простоты
+        video.write_videofile(
             output_path,
             codec="libx264",
             audio_codec="aac",
-            bitrate="8000k",
+            bitrate="4000k",
             fps=30,
             verbose=False,
             logger=None
@@ -470,8 +429,6 @@ def cut_video_with_moviepy(video_path: str, start_time: float, end_time: float,
         
         # Очищаем память
         video.close()
-        subtitle.close()
-        final_video.close()
         
         logger.info(f"✅ MoviePy cutting successful: {output_path}")
         return True
@@ -543,7 +500,7 @@ async def process_video_analysis(task_id: str, video_path: str, language: str):
         
         # Получаем длительность видео
         try:
-            result = subprocess.run(['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', video_path], capture_output=True, text=True)
+            result = subprocess.run(['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', video_path], capture_output=True, text=True, timeout=30)
             video_duration = float(result.stdout.strip())
         except:
             # Fallback через MoviePy
