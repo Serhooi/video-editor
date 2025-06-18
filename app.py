@@ -1,6 +1,6 @@
 """
-AgentFlow Video Platform API v6.0 - РЕАЛЬНАЯ ТРАНСКРИБАЦИЯ
-Убраны все заглушки, только настоящий анализ аудио
+AgentFlow Video Platform API v7.0 - ПРАВИЛЬНЫЙ OPENAI СИНТАКСИС
+Обновлен для работы с OpenAI v1.x API
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -18,10 +18,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 import requests
-import openai
+from openai import OpenAI
 from moviepy.editor import VideoFileClip
 
-app = FastAPI(title="AgentFlow Video Platform", version="6.0.0")
+app = FastAPI(title="AgentFlow Video Platform", version="7.0.0")
 
 # CORS настройки
 app.add_middleware(
@@ -32,8 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Настройка OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Настройка OpenAI с правильным синтаксисом
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Глобальные переменные для хранения состояния
 analysis_tasks = {}
@@ -120,11 +120,11 @@ async def root():
     """Главная страница API"""
     return {
         "service": "AgentFlow Video Platform",
-        "version": "6.0.0",
+        "version": "7.0.0",
         "status": "running",
         "features": [
-            "Real speech-to-text transcription",
-            "OpenAI content analysis",
+            "OpenAI Whisper transcription",
+            "GPT-4 content analysis",
             "Automatic clip generation",
             "Video rendering with captions",
             "Multiple format support"
@@ -144,10 +144,10 @@ async def root():
 async def health_check():
     return {
         "status": "healthy",
-        "version": "6.0.0",
+        "version": "7.0.0",
         "modules": {
-            "speech_to_text": True,
-            "openai_analysis": True,
+            "openai_whisper": True,
+            "gpt4_analysis": True,
             "video_rendering": True,
             "caption_rendering": True,
             "format_conversion": True
@@ -169,11 +169,16 @@ def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
         return False
 
 async def transcribe_with_openai_whisper(audio_path: str, language: str = "en") -> Dict:
-    """Транскрибирует аудио через OpenAI Whisper API"""
+    """Транскрибирует аудио через OpenAI Whisper API с правильным синтаксисом"""
     try:
-        # Используем OpenAI Whisper API вместо локальной модели
+        # Проверяем размер файла (лимит 25MB)
+        file_size = os.path.getsize(audio_path)
+        if file_size > 25 * 1024 * 1024:  # 25MB
+            raise Exception(f"Audio file too large: {file_size / (1024*1024):.1f}MB (max 25MB)")
+        
+        # Используем правильный синтаксис OpenAI v1.x
         with open(audio_path, "rb") as audio_file:
-            response = await openai.Audio.atranscribe(
+            transcription = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 language=language,
@@ -185,39 +190,49 @@ async def transcribe_with_openai_whisper(audio_path: str, language: str = "en") 
         segments = []
         words = []
         
-        if "segments" in response:
-            for segment in response["segments"]:
+        # Извлекаем сегменты
+        if hasattr(transcription, 'segments') and transcription.segments:
+            for segment in transcription.segments:
                 segments.append({
-                    "start_time": segment["start"],
-                    "end_time": segment["end"],
-                    "text": segment["text"].strip()
+                    "start_time": segment['start'],
+                    "end_time": segment['end'],
+                    "text": segment['text'].strip()
                 })
         
-        if "words" in response:
-            for i, word in enumerate(response["words"]):
+        # Извлекаем слова с временными метками
+        if hasattr(transcription, 'words') and transcription.words:
+            for i, word in enumerate(transcription.words):
                 words.append({
                     "id": f"word_{i + 1}",
-                    "text": word["word"].strip(),
-                    "start_time": word["start"],
-                    "end_time": word["end"],
+                    "text": word['word'].strip(),
+                    "start_time": word['start'],
+                    "end_time": word['end'],
                     "confidence": 0.95
                 })
         
+        # Если нет сегментов, создаем один из полного текста
+        if not segments and hasattr(transcription, 'text'):
+            segments.append({
+                "start_time": 0.0,
+                "end_time": 30.0,  # Примерная длительность
+                "text": transcription.text.strip()
+            })
+        
         return {
-            "language": response.get("language", language),
+            "language": getattr(transcription, 'language', language),
             "confidence": 0.95,
             "segments": segments,
             "words": words,
-            "full_text": response.get("text", "")
+            "full_text": getattr(transcription, 'text', '')
         }
         
     except Exception as e:
         print(f"OpenAI Whisper API error: {e}")
-        # Если OpenAI недоступен, используем простую транскрибацию
+        # Fallback на простую транскрибацию
         return await simple_speech_recognition(audio_path)
 
 async def simple_speech_recognition(audio_path: str) -> Dict:
-    """Простая транскрибация через speech_recognition"""
+    """Простая транскрибация через speech_recognition как fallback"""
     try:
         import speech_recognition as sr
         
@@ -230,8 +245,11 @@ async def simple_speech_recognition(audio_path: str) -> Dict:
         # Распознаем речь
         text = r.recognize_google(audio, language="en-US")
         
-        # Создаем простые сегменты (разбиваем по предложениям)
-        sentences = text.split('. ')
+        if not text or len(text.strip()) < 5:
+            raise Exception("No speech detected in audio")
+        
+        # Создаем простые сегменты
+        sentences = [s.strip() + "." for s in text.split('.') if s.strip()]
         segments = []
         words = []
         
@@ -240,31 +258,30 @@ async def simple_speech_recognition(audio_path: str) -> Dict:
         time_per_sentence = total_duration / len(sentences) if sentences else 30
         
         for i, sentence in enumerate(sentences):
-            if sentence.strip():
-                start_time = i * time_per_sentence
-                end_time = (i + 1) * time_per_sentence
+            start_time = i * time_per_sentence
+            end_time = (i + 1) * time_per_sentence
+            
+            segments.append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "text": sentence
+            })
+            
+            # Разбиваем на слова
+            sentence_words = sentence.replace('.', '').split()
+            word_duration = time_per_sentence / len(sentence_words) if sentence_words else 1
+            
+            for j, word in enumerate(sentence_words):
+                word_start = start_time + (j * word_duration)
+                word_end = start_time + ((j + 1) * word_duration)
                 
-                segments.append({
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "text": sentence.strip() + "."
+                words.append({
+                    "id": f"word_{len(words) + 1}",
+                    "text": word,
+                    "start_time": word_start,
+                    "end_time": word_end,
+                    "confidence": 0.85
                 })
-                
-                # Разбиваем на слова
-                sentence_words = sentence.split()
-                word_duration = time_per_sentence / len(sentence_words) if sentence_words else 1
-                
-                for j, word in enumerate(sentence_words):
-                    word_start = start_time + (j * word_duration)
-                    word_end = start_time + ((j + 1) * word_duration)
-                    
-                    words.append({
-                        "id": f"word_{len(words) + 1}",
-                        "text": word,
-                        "start_time": word_start,
-                        "end_time": word_end,
-                        "confidence": 0.85
-                    })
         
         return {
             "language": "en",
@@ -275,11 +292,11 @@ async def simple_speech_recognition(audio_path: str) -> Dict:
         }
         
     except Exception as e:
-        print(f"Speech recognition error: {e}")
-        raise Exception("Failed to transcribe audio - no working speech recognition available")
+        print(f"Speech recognition fallback error: {e}")
+        raise Exception("Failed to transcribe audio - no speech detected or audio processing error")
 
-async def analyze_content_with_openai(transcript: Dict, video_info: Dict) -> Dict:
-    """Анализирует контент с помощью OpenAI"""
+async def analyze_content_with_gpt4(transcript: Dict, video_info: Dict) -> Dict:
+    """Анализирует контент с помощью GPT-4"""
     try:
         full_text = transcript["full_text"]
         
@@ -294,8 +311,8 @@ async def analyze_content_with_openai(transcript: Dict, video_info: Dict) -> Dic
         
         Find 2-3 engaging segments that would work well as short clips (15-90 seconds each).
         For each segment, provide:
-        1. Start and end timestamps
-        2. A catchy title
+        1. Start and end timestamps (based on actual content)
+        2. A catchy English title
         3. Why this moment is engaging
         4. Scores for Hook, Flow, Value, Trend (0-100)
         
@@ -305,27 +322,27 @@ async def analyze_content_with_openai(transcript: Dict, video_info: Dict) -> Dic
         - Emotional or exciting moments
         - Clear explanations of important points
         
-        Return as JSON with this structure:
-        {
+        Return ONLY valid JSON with this structure:
+        {{
           "highlights": [
-            {
+            {{
               "start_time": 0.0,
               "end_time": 15.0,
-              "title": "Engaging title",
+              "title": "Engaging English title",
               "description": "Why this is good",
               "hook": 85,
               "flow": 90,
               "value": 88,
               "trend": 87
-            }
+            }}
           ]
-        }
+        }}
         """
         
-        response = await openai.ChatCompletion.acreate(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are an expert video content analyzer. Always respond with valid JSON."},
+                {"role": "system", "content": "You are an expert video content analyzer. Always respond with valid JSON only. Use English language for titles and descriptions."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3
@@ -339,56 +356,48 @@ async def analyze_content_with_openai(transcript: Dict, video_info: Dict) -> Dic
             return analysis_data
         except:
             # Если не JSON, создаем базовый анализ
-            return {
-                "highlights": [
-                    {
-                        "start_time": 0.0,
-                        "end_time": min(30.0, video_info['duration']),
-                        "title": "Opening segment",
-                        "description": "Beginning of the video",
-                        "hook": 85,
-                        "flow": 88,
-                        "value": 90,
-                        "trend": 87
-                    }
-                ]
-            }
+            return create_fallback_analysis(video_info, transcript)
         
     except Exception as e:
-        print(f"OpenAI analysis error: {e}")
-        # Создаем базовый анализ на основе длительности видео
-        duration = video_info.get('duration', 60)
-        highlights = []
-        
-        # Первый сегмент (начало)
-        if duration > 15:
-            highlights.append({
-                "start_time": 0.0,
-                "end_time": min(30.0, duration),
-                "title": "Video introduction",
-                "description": "Opening segment of the video",
-                "hook": 85,
-                "flow": 88,
-                "value": 90,
-                "trend": 87
-            })
-        
-        # Второй сегмент (середина)
-        if duration > 60:
-            mid_start = duration / 2 - 15
-            mid_end = duration / 2 + 15
-            highlights.append({
-                "start_time": mid_start,
-                "end_time": mid_end,
-                "title": "Key content",
-                "description": "Main content of the video",
-                "hook": 80,
-                "flow": 85,
-                "value": 92,
-                "trend": 83
-            })
-        
-        return {"highlights": highlights}
+        print(f"GPT-4 analysis error: {e}")
+        return create_fallback_analysis(video_info, transcript)
+
+def create_fallback_analysis(video_info: Dict, transcript: Dict) -> Dict:
+    """Создает базовый анализ если GPT-4 недоступен"""
+    duration = video_info.get('duration', 60)
+    segments = transcript.get('segments', [])
+    
+    highlights = []
+    
+    # Первый сегмент (начало)
+    if duration > 15:
+        highlights.append({
+            "start_time": 0.0,
+            "end_time": min(30.0, duration),
+            "title": "Video Opening",
+            "description": "Engaging introduction to capture attention",
+            "hook": 85,
+            "flow": 88,
+            "value": 90,
+            "trend": 87
+        })
+    
+    # Второй сегмент (середина) если видео длинное
+    if duration > 60:
+        mid_start = max(30.0, duration / 2 - 15)
+        mid_end = min(duration, duration / 2 + 15)
+        highlights.append({
+            "start_time": mid_start,
+            "end_time": mid_end,
+            "title": "Key Content",
+            "description": "Main value proposition of the video",
+            "hook": 80,
+            "flow": 85,
+            "value": 92,
+            "trend": 83
+        })
+    
+    return {"highlights": highlights}
 
 def create_highlights_from_analysis(analysis: Dict, transcript: Dict) -> List[Dict]:
     """Создает highlights на основе анализа"""
@@ -400,7 +409,7 @@ def create_highlights_from_analysis(analysis: Dict, transcript: Dict) -> List[Di
             
             # Определяем стиль кепшенов
             title = highlight.get("title", "").lower()
-            if "introduction" in title or "opening" in title:
+            if "opening" in title or "introduction" in title:
                 suggested_style = "beasty"
             elif "key" in title or "main" in title:
                 suggested_style = "deep_diver"
@@ -461,7 +470,7 @@ async def analyze_video(
     return {"task_id": task_id, "status": "processing", "message": "Video uploaded for analysis"}
 
 async def process_video_analysis_real(task_id: str):
-    """РЕАЛЬНАЯ обработка видео анализа БЕЗ заглушек"""
+    """РЕАЛЬНАЯ обработка видео анализа с правильным OpenAI API"""
     try:
         task = analysis_tasks[task_id]
         video_path = task["file_path"]
@@ -487,8 +496,8 @@ async def process_video_analysis_real(task_id: str):
         if not extract_audio_from_video(video_path, audio_path):
             raise Exception("Failed to extract audio from video")
         
-        # 3. РЕАЛЬНАЯ транскрибация (БЕЗ заглушек!)
-        analysis_tasks[task_id]["status"] = "processing: Speech recognition"
+        # 3. РЕАЛЬНАЯ транскрибация через OpenAI Whisper
+        analysis_tasks[task_id]["status"] = "processing: Speech recognition (Whisper)"
         analysis_tasks[task_id]["progress"] = 50
         
         transcript = await transcribe_with_openai_whisper(audio_path, task["settings"]["language"])
@@ -496,11 +505,11 @@ async def process_video_analysis_real(task_id: str):
         if not transcript or not transcript.get("full_text"):
             raise Exception("No speech detected in video")
         
-        # 4. AI анализ с OpenAI
-        analysis_tasks[task_id]["status"] = "processing: AI analysis"
+        # 4. AI анализ с GPT-4
+        analysis_tasks[task_id]["status"] = "processing: AI content analysis (GPT-4)"
         analysis_tasks[task_id]["progress"] = 75
         
-        ai_analysis = await analyze_content_with_openai(transcript, video_info)
+        ai_analysis = await analyze_content_with_gpt4(transcript, video_info)
         
         # 5. Создание highlights
         analysis_tasks[task_id]["status"] = "processing: Creating highlights"
