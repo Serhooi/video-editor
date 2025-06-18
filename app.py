@@ -1,16 +1,13 @@
 """
-AgentFlow AI Clips v15.2.1 - PRODUCTION READY + ИСПРАВЛЕННЫЕ ENDPOINTS + QUEUE FIX
-Полная версия с исправленной функцией add_to_queue
+AgentFlow AI Clips v15.3 - WHISPER FIX FOR LONG VIDEOS
+Полная версия с исправленной транскрибацией для видео 5-20 минут
 
-ОПТИМИЗАЦИИ ДЛЯ PRODUCTION:
-1. Queue система для задач
-2. Лимиты ресурсов и таймауты
-3. Эффективное использование памяти
-4. Batch обработка
-5. Кэширование результатов
-6. Мониторинг ресурсов
-7. ИСПРАВЛЕННЫЕ ENDPOINTS для генерации клипов
-8. ИСПРАВЛЕННАЯ QUEUE ФУНКЦИЯ
+ИСПРАВЛЕНИЯ:
+1. Увеличенные timeout для длинных видео
+2. Chunking для очень больших аудио файлов
+3. Улучшенное извлечение аудио
+4. Детальный прогресс индикатор
+5. Graceful error handling
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -39,7 +36,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.2.1")
+app = FastAPI(title="AgentFlow AI Clips", version="15.3")
 
 # CORS
 app.add_middleware(
@@ -50,18 +47,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# PRODUCTION КОНФИГУРАЦИЯ
+# PRODUCTION КОНФИГУРАЦИЯ - ОБНОВЛЕННАЯ ДЛЯ ДЛИННЫХ ВИДЕО
 class Config:
     # Лимиты ресурсов
     MAX_CONCURRENT_TASKS = 2  # Максимум задач одновременно
     MAX_QUEUE_SIZE = 10       # Максимум задач в очереди
-    MAX_VIDEO_SIZE_MB = 150   # УВЕЛИЧЕНО: Максимум размер видео (было 100)
-    MAX_VIDEO_DURATION = 300  # Максимум длительность видео (5 мин)
+    MAX_VIDEO_SIZE_MB = 150   # Максимум размер видео
+    MAX_VIDEO_DURATION = 1200 # УВЕЛИЧЕНО: Максимум длительность видео (20 мин)
     
-    # Таймауты
-    FFMPEG_TIMEOUT = 120      # Таймаут FFmpeg операций
-    OPENAI_TIMEOUT = 60       # Таймаут OpenAI запросов
+    # Таймауты - ИСПРАВЛЕНО ДЛЯ ДЛИННЫХ ВИДЕО
+    FFMPEG_TIMEOUT = 300      # УВЕЛИЧЕНО: Таймаут FFmpeg операций (5 мин)
+    OPENAI_TIMEOUT = 600      # УВЕЛИЧЕНО: Таймаут OpenAI запросов (10 мин)
+    WHISPER_TIMEOUT = 900     # НОВОЕ: Специальный таймаут для Whisper (15 мин)
     CLEANUP_INTERVAL = 300    # Очистка файлов каждые 5 мин
+    
+    # Chunking для очень длинных видео
+    MAX_AUDIO_SIZE_MB = 25    # НОВОЕ: Максимум размер аудио для одного запроса
+    CHUNK_DURATION = 600      # НОВОЕ: Максимум длительность chunk (10 мин)
     
     # Качество видео (оптимизированное)
     VIDEO_BITRATE = "2000k"   # Уменьшенный битрейт
@@ -74,14 +76,15 @@ class Config:
 
 config = Config()
 
-# OpenAI клиент
+# OpenAI клиент - ОБНОВЛЕННЫЙ С УВЕЛИЧЕННЫМ TIMEOUT
 client = None
 try:
     from openai import OpenAI
     api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
-        client = OpenAI(api_key=api_key, timeout=config.OPENAI_TIMEOUT)
-        logger.info("✅ OpenAI client initialized")
+        # УВЕЛИЧЕННЫЙ TIMEOUT ДЛЯ WHISPER
+        client = OpenAI(api_key=api_key, timeout=config.WHISPER_TIMEOUT)
+        logger.info("✅ OpenAI client initialized with extended timeout")
     else:
         logger.warning("⚠️ OpenAI API key not found")
 except Exception as e:
@@ -163,7 +166,7 @@ def start_cleanup_scheduler():
 # Запуск очистки при старте
 start_cleanup_scheduler()
 
-# Queue управление - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# Queue управление
 def add_to_queue(task_name: str, task_func, *args):
     """Добавить задачу в очередь"""
     with task_lock:
@@ -216,43 +219,111 @@ def check_dependencies():
     
     return deps
 
-# Основные функции
+# УЛУЧШЕННАЯ ФУНКЦИЯ ИЗВЛЕЧЕНИЯ АУДИО
 def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
-    """Извлечение аудио из видео"""
+    """Извлечение аудио из видео с улучшенными параметрами"""
     try:
+        # Улучшенная команда FFmpeg для лучшего качества аудио
         cmd = [
             'ffmpeg', '-i', video_path,
-            '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+            '-vn',                    # Без видео
+            '-acodec', 'pcm_s16le',   # PCM 16-bit
+            '-ar', '16000',           # 16kHz sample rate (оптимально для Whisper)
+            '-ac', '1',               # Моно
+            '-af', 'volume=2.0',      # НОВОЕ: Увеличиваем громкость в 2 раза
             '-y', audio_path
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=config.FFMPEG_TIMEOUT)
-        return result.returncode == 0
+        
+        if result.returncode == 0:
+            # Проверяем размер созданного файла
+            audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
+            logger.info(f"🎵 Audio extracted: {audio_size:.1f}MB")
+            return True
+        else:
+            logger.error(f"FFmpeg error: {result.stderr}")
+            return False
+            
     except Exception as e:
         logger.error(f"Audio extraction failed: {e}")
         return False
 
-def transcribe_audio(audio_path: str) -> Optional[dict]:
-    """Транскрибация аудио через OpenAI Whisper"""
-    if not client:
-        logger.error("OpenAI client not available")
-        return None
-    
+# НОВАЯ ФУНКЦИЯ CHUNKING ДЛЯ ДЛИННЫХ АУДИО
+def split_audio_into_chunks(audio_path: str, chunk_duration: int = 600) -> List[str]:
+    """Разбивает длинное аудио на chunks по 10 минут"""
+    try:
+        chunks = []
+        audio_dir = os.path.dirname(audio_path)
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        
+        # Получаем длительность аудио
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json',
+            '-show_format', audio_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            duration = float(data['format']['duration'])
+            
+            # Если аудио короче chunk_duration, возвращаем оригинал
+            if duration <= chunk_duration:
+                return [audio_path]
+            
+            # Разбиваем на chunks
+            chunk_count = int(duration / chunk_duration) + 1
+            for i in range(chunk_count):
+                start_time = i * chunk_duration
+                chunk_path = os.path.join(audio_dir, f"{base_name}_chunk_{i}.wav")
+                
+                cmd = [
+                    'ffmpeg', '-i', audio_path,
+                    '-ss', str(start_time),
+                    '-t', str(chunk_duration),
+                    '-acodec', 'copy',
+                    '-y', chunk_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode == 0:
+                    chunks.append(chunk_path)
+                    logger.info(f"📦 Created chunk {i+1}/{chunk_count}: {chunk_path}")
+                else:
+                    logger.error(f"Failed to create chunk {i}: {result.stderr}")
+            
+            return chunks
+        
+        return [audio_path]  # Fallback
+        
+    except Exception as e:
+        logger.error(f"Audio chunking failed: {e}")
+        return [audio_path]
+
+# ФУНКЦИЯ ТРАНСКРИБАЦИИ ОДНОГО ФАЙЛА
+def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional[dict]:
+    """Транскрибация одного аудио файла"""
     try:
         with open(audio_path, 'rb') as audio_file:
-            # Совместимая версия для OpenAI 1.3.0
+            logger.info(f"🎤 Starting Whisper transcription...")
+            
+            # Whisper API вызов с увеличенным timeout
             response = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                response_format="verbose_json"
+                response_format="verbose_json",
+                language="en"  # Указываем язык для ускорения
             )
+            
+            logger.info(f"✅ Whisper transcription completed")
         
-        # Создаем временные метки если их нет
+        # Обрабатываем сегменты с учетом time_offset
         segments = []
         if hasattr(response, 'segments') and response.segments:
             segments = [
                 {
-                    "start": seg.start,
-                    "end": seg.end,
+                    "start": seg.start + time_offset,
+                    "end": seg.end + time_offset,
                     "text": seg.text
                 }
                 for seg in response.segments
@@ -261,13 +332,14 @@ def transcribe_audio(audio_path: str) -> Optional[dict]:
             # Fallback: создаем простые сегменты
             text = response.text
             words = text.split()
-            segment_length = 5.0  # 5 секунд на сегмент
+            segment_length = 5.0
             words_per_segment = max(1, len(words) // max(1, int(len(words) * segment_length / 60)))
             
             for i in range(0, len(words), words_per_segment):
                 segment_words = words[i:i + words_per_segment]
-                start_time = i * segment_length / words_per_segment
-                end_time = min(start_time + segment_length, len(words) * segment_length / words_per_segment)
+                start_time = (i * segment_length / words_per_segment) + time_offset
+                end_time = min(start_time + segment_length, 
+                              (len(words) * segment_length / words_per_segment) + time_offset)
                 
                 segments.append({
                     "start": start_time,
@@ -278,9 +350,73 @@ def transcribe_audio(audio_path: str) -> Optional[dict]:
         return {
             "full_text": response.text,
             "segments": segments,
-            "words": [],  # Не поддерживается в 1.3.0
+            "words": [],
             "language": "english"
         }
+        
+    except Exception as e:
+        logger.error(f"Single audio transcription failed: {e}")
+        return None
+
+# УЛУЧШЕННАЯ ФУНКЦИЯ ТРАНСКРИБАЦИИ С CHUNKING
+def transcribe_audio(audio_path: str, task_id: str = None) -> Optional[dict]:
+    """Транскрибация аудио через OpenAI Whisper с поддержкой chunking"""
+    if not client:
+        logger.error("OpenAI client not available")
+        return None
+    
+    try:
+        # Обновляем статус если есть task_id
+        if task_id and task_id in completed_tasks:
+            completed_tasks[task_id]['status'] = 'processing: Подготовка аудио'
+        
+        # Проверяем размер аудио файла
+        audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
+        logger.info(f"🎵 Audio file size: {audio_size:.1f}MB")
+        
+        # Если файл слишком большой, разбиваем на chunks
+        if audio_size > config.MAX_AUDIO_SIZE_MB:
+            logger.info(f"📦 Large audio file, splitting into chunks...")
+            if task_id and task_id in completed_tasks:
+                completed_tasks[task_id]['status'] = 'processing: Разбивка на части'
+            
+            chunks = split_audio_into_chunks(audio_path, config.CHUNK_DURATION)
+            
+            # Транскрибируем каждый chunk
+            all_segments = []
+            full_text_parts = []
+            
+            for i, chunk_path in enumerate(chunks):
+                if task_id and task_id in completed_tasks:
+                    completed_tasks[task_id]['status'] = f'processing: Транскрибация части {i+1}/{len(chunks)}'
+                
+                logger.info(f"🎤 Transcribing chunk {i+1}/{len(chunks)}: {chunk_path}")
+                
+                chunk_result = transcribe_single_audio(chunk_path, i * config.CHUNK_DURATION)
+                if chunk_result:
+                    all_segments.extend(chunk_result['segments'])
+                    full_text_parts.append(chunk_result['full_text'])
+                
+                # Очищаем chunk файл
+                try:
+                    if chunk_path != audio_path:  # Не удаляем оригинальный файл
+                        os.unlink(chunk_path)
+                except:
+                    pass
+            
+            return {
+                "full_text": " ".join(full_text_parts),
+                "segments": all_segments,
+                "words": [],
+                "language": "english"
+            }
+        
+        else:
+            # Обычная транскрибация для небольших файлов
+            if task_id and task_id in completed_tasks:
+                completed_tasks[task_id]['status'] = 'processing: Транскрибация аудио'
+            
+            return transcribe_single_audio(audio_path, 0)
         
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
@@ -366,21 +502,22 @@ def get_video_duration(video_path: str) -> float:
     except:
         return 0.0
 
-# Фоновая задача анализа
+# ОБНОВЛЕННАЯ ФУНКЦИЯ АНАЛИЗА ВИДЕО
 def analyze_video_task(task_id: str, file_path: str):
-    """Фоновая задача анализа видео"""
+    """Фоновая задача анализа видео с улучшенной обработкой"""
     try:
         # Обновляем статус
         completed_tasks[task_id]['status'] = 'processing: Извлечение аудио'
+        logger.info(f"🎬 Starting video analysis for {task_id}")
         
         # Извлекаем аудио
         audio_path = AUDIO_DIR / f"{task_id}.wav"
         if not extract_audio_from_video(file_path, str(audio_path)):
             raise Exception("Failed to extract audio")
         
-        # Транскрибация
+        # Транскрибация с передачей task_id для обновления статуса
         completed_tasks[task_id]['status'] = 'processing: Транскрибация'
-        transcript = transcribe_audio(str(audio_path))
+        transcript = transcribe_audio(str(audio_path), task_id)
         if not transcript:
             raise Exception("Failed to transcribe audio")
         
@@ -423,7 +560,7 @@ def analyze_video_task(task_id: str, file_path: str):
 async def root():
     return {
         "service": "AgentFlow AI Clips",
-        "version": "15.2.1",
+        "version": "15.3",
         "status": "running",
         "features": [
             "Video analysis with Whisper AI",
@@ -431,7 +568,9 @@ async def root():
             "Automated video clipping",
             "Multiple subtitle styles",
             "Queue system for scalability",
-            "Resource monitoring"
+            "Resource monitoring",
+            "Support for long videos (up to 20 min)",
+            "Audio chunking for large files"
         ]
     }
 
@@ -454,7 +593,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "version": "15.2.1",
+        "version": "15.3",
         "dependencies": deps,
         "system": system_stats,
         "queue": queue_stats
@@ -510,14 +649,14 @@ async def analyze_video(file: UploadFile = File(...)):
         
         completed_tasks[task_id] = task_data
         
-        # Добавление в очередь - ИСПРАВЛЕНО: убран await
+        # Добавление в очередь
         queue_position = add_to_queue(f"analyze_{task_id}", analyze_video_task, task_id, str(file_path))
         
         response = {
             "task_id": task_id,
             "status": "queued",
             "queue_position": queue_position,
-            "estimated_wait_time": queue_position * 60  # Примерно 60 сек на задачу
+            "estimated_wait_time": queue_position * 120  # Увеличено время ожидания для длинных видео
         }
         
         if queue_position == 0:
@@ -540,7 +679,7 @@ async def get_analysis_status(task_id: str):
     
     return completed_tasks[task_id]
 
-# ENDPOINTS ДЛЯ ГЕНЕРАЦИИ КЛИПОВ (ИСПРАВЛЕННЫЕ)
+# ENDPOINTS ДЛЯ ГЕНЕРАЦИИ КЛИПОВ
 
 @app.post("/api/clips/generate")
 async def generate_clips(
@@ -574,7 +713,7 @@ async def generate_clips(
         # Сохраняем в completed_tasks с префиксом gen_
         completed_tasks[f"gen_{generation_id}"] = generation_task
         
-        # Добавляем в очередь - ИСПРАВЛЕНО: убран await
+        # Добавляем в очередь
         add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
         
         return {
