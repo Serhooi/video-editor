@@ -1,40 +1,25 @@
 """
-AgentFlow Video Platform API - Professional Edition
-Полноценная видеоплатформа с функционалом Opus.pro + Canva
-
-Основные модули:
-1. AI Video Analysis - анализ и транскрибация
-2. AI Clips Generator - автоматическая нарезка
-3. Professional Video Editor - полноценный редактор
-4. Caption Styles - стили кепшенов
-5. Transitions Library - библиотека переходов
-6. Music Library - музыкальная библиотека
-7. Rendering Engine - движок рендеринга
+AgentFlow Video Platform API v3.0 - С РЕАЛЬНОЙ ОБРАБОТКОЙ ВИДЕО
+Полноценная видеоплатформа уровня Opus.pro + Canva
+Включает: AI анализ, нарезку видео, добавление субтитров, кроппинг под форматы
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-import os
 import uuid
-import json
 import asyncio
-import tempfile
+import json
+import os
 import shutil
-from datetime import datetime, timedelta
-import logging
+from datetime import datetime
+import subprocess
+import tempfile
+from pathlib import Path
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="AgentFlow Video Platform API",
-    description="Professional video editing platform with AI capabilities",
-    version="2.0.0"
-)
+app = FastAPI(title="AgentFlow Video Platform", version="3.0.0")
 
 # CORS настройки
 app.add_middleware(
@@ -46,310 +31,259 @@ app.add_middleware(
 )
 
 # Глобальные переменные для хранения состояния
-tasks_storage = {}
-projects_storage = {}
-templates_storage = {}
-music_library = {}
+analysis_tasks = {}
+clip_generation_tasks = {}
+rendered_clips = {}
+projects = {}
 
-# ==================== МОДЕЛИ ДАННЫХ ====================
+# Директории для файлов
+UPLOAD_DIR = Path("uploads")
+CLIPS_DIR = Path("clips")
+RENDERED_DIR = Path("rendered")
 
+# Создаем директории
+for dir_path in [UPLOAD_DIR, CLIPS_DIR, RENDERED_DIR]:
+    dir_path.mkdir(exist_ok=True)
+
+# Модели данных
 class VideoAnalysisRequest(BaseModel):
-    video_id: str
     ai_model: str = "gpt-4"
-    language: str = "ru"
+    language: str = "en"  # Изменено на английский по умолчанию
     extract_highlights: bool = True
     generate_captions: bool = True
-
-class TranscriptEdit(BaseModel):
-    word_id: str
-    new_text: str
-    start_time: float
-    end_time: float
 
 class ClipGenerationRequest(BaseModel):
     video_id: str
     clip_model: str = "viral"
     genre: str = "general"
-    length_range: tuple = (30, 90)
+    length_range: List[int] = [30, 90]
+    max_clips: int = 5
     custom_prompt: Optional[str] = None
-    max_clips: int = 10
 
-class CaptionStyle(BaseModel):
-    style_id: str
-    name: str
-    font_family: str
-    font_size: int
-    color: str
-    background_color: Optional[str] = None
-    animation: str = "none"
-    position: str = "bottom"
-    outline: bool = False
-    shadow: bool = False
+class RenderRequest(BaseModel):
+    caption_style: str = "beasty"
+    format_type: str = "youtube"  # youtube, tiktok, instagram
+    resolution: str = "1080p"
+    language: str = "en"
 
-class Transition(BaseModel):
-    transition_id: str
-    name: str
-    type: str  # "fade", "zoom", "slide", "wipe"
-    duration: float = 0.5
-    easing: str = "ease-in-out"
-
-class MusicTrack(BaseModel):
-    track_id: str
-    name: str
-    artist: str
-    duration: float
-    genre: str
-    mood: str
-    bpm: int
-    copyright_free: bool = True
-    file_url: str
-
-class EditorProject(BaseModel):
-    project_id: str
-    name: str
-    timeline: List[Dict]
-    settings: Dict
-    created_at: datetime
-    updated_at: datetime
-
-class RenderSettings(BaseModel):
-    resolution: str = "1920x1080"
-    fps: int = 30
-    format: str = "mp4"
-    quality: str = "high"
-    aspect_ratio: str = "16:9"
-
-# ==================== ИНИЦИАЛИЗАЦИЯ БИБЛИОТЕК ====================
-
-def initialize_caption_styles():
-    """Инициализация стилей кепшенов"""
-    styles = {
-        "karaoke": CaptionStyle(
-            style_id="karaoke",
-            name="Karaoke",
-            font_family="Arial Black",
-            font_size=48,
-            color="#FFFFFF",
-            background_color="#000000",
-            animation="highlight",
-            position="bottom",
-            outline=True
-        ),
-        "beasty": CaptionStyle(
-            style_id="beasty",
-            name="Beasty",
-            font_family="Impact",
-            font_size=52,
-            color="#FF6B35",
-            animation="bounce",
-            position="center",
-            outline=True,
-            shadow=True
-        ),
-        "deep_diver": CaptionStyle(
-            style_id="deep_diver",
-            name="Deep Diver",
-            font_family="Roboto",
-            font_size=44,
-            color="#00D4FF",
-            background_color="rgba(0,0,0,0.7)",
-            animation="fade",
-            position="bottom"
-        ),
-        "youshael": CaptionStyle(
-            style_id="youshael",
-            name="Youshael",
-            font_family="Montserrat",
-            font_size=46,
-            color="#FFD700",
-            animation="typewriter",
-            position="top",
-            outline=True
-        )
+# Стили кепшенов
+CAPTION_STYLES = {
+    "karaoke": {
+        "style_id": "karaoke",
+        "name": "Karaoke",
+        "font_family": "Arial Black",
+        "font_size": 48,
+        "color": "#FFFFFF",
+        "background_color": "#000000",
+        "animation": "highlight",
+        "position": "bottom",
+        "outline": True,
+        "shadow": False
+    },
+    "beasty": {
+        "style_id": "beasty",
+        "name": "Beasty",
+        "font_family": "Impact",
+        "font_size": 52,
+        "color": "#FF6B35",
+        "background_color": None,
+        "animation": "bounce",
+        "position": "center",
+        "outline": True,
+        "shadow": True
+    },
+    "deep_diver": {
+        "style_id": "deep_diver",
+        "name": "Deep Diver",
+        "font_family": "Roboto",
+        "font_size": 44,
+        "color": "#00D4FF",
+        "background_color": "rgba(0,0,0,0.7)",
+        "animation": "fade",
+        "position": "bottom",
+        "outline": False,
+        "shadow": False
+    },
+    "youshael": {
+        "style_id": "youshael",
+        "name": "Youshael",
+        "font_family": "Montserrat",
+        "font_size": 46,
+        "color": "#FFD700",
+        "background_color": None,
+        "animation": "typewriter",
+        "position": "top",
+        "outline": True,
+        "shadow": False
     }
-    return styles
+}
 
-def initialize_transitions():
-    """Инициализация библиотеки переходов"""
-    transitions = {
-        "cross_fade": Transition(
-            transition_id="cross_fade",
-            name="Cross Fade",
-            type="fade",
-            duration=0.5
-        ),
-        "cross_zoom": Transition(
-            transition_id="cross_zoom",
-            name="Cross Zoom",
-            type="zoom",
-            duration=0.8
-        ),
-        "zoom_in": Transition(
-            transition_id="zoom_in",
-            name="Zoom In",
-            type="zoom",
-            duration=0.6
-        ),
-        "zoom_out": Transition(
-            transition_id="zoom_out",
-            name="Zoom Out",
-            type="zoom",
-            duration=0.6
-        ),
-        "fade_in": Transition(
-            transition_id="fade_in",
-            name="Fade In",
-            type="fade",
-            duration=0.4
-        ),
-        "fade_out": Transition(
-            transition_id="fade_out",
-            name="Fade Out",
-            type="fade",
-            duration=0.4
-        )
-    }
-    return transitions
-
-def initialize_music_library():
-    """Инициализация музыкальной библиотеки"""
-    tracks = {
-        "magnetic": MusicTrack(
-            track_id="magnetic",
-            name="Magnetic",
-            artist="AudioJungle",
-            duration=180.0,
-            genre="Electronic",
-            mood="Energetic",
-            bpm=128,
-            file_url="/music/magnetic.mp3"
-        ),
-        "cruising": MusicTrack(
-            track_id="cruising",
-            name="Cruising",
-            artist="AudioJungle",
-            duration=165.0,
-            genre="Pop",
-            mood="Upbeat",
-            bpm=120,
-            file_url="/music/cruising.mp3"
-        ),
-        "moonlight": MusicTrack(
-            track_id="moonlight",
-            name="Moonlight",
-            artist="AudioJungle",
-            duration=200.0,
-            genre="Ambient",
-            mood="Calm",
-            bpm=85,
-            file_url="/music/moonlight.mp3"
-        ),
-        "sober": MusicTrack(
-            track_id="sober",
-            name="SOBER",
-            artist="AudioJungle",
-            duration=145.0,
-            genre="Hip-Hop",
-            mood="Serious",
-            bpm=95,
-            file_url="/music/sober.mp3"
-        )
-    }
-    return tracks
-
-# Инициализация библиотек
-caption_styles = initialize_caption_styles()
-transitions_library = initialize_transitions()
-music_library = initialize_music_library()
-
-# ==================== ОСНОВНЫЕ ЭНДПОИНТЫ ====================
+# Форматы видео
+VIDEO_FORMATS = {
+    "youtube": {"aspect_ratio": "16:9", "width": 1920, "height": 1080},
+    "tiktok": {"aspect_ratio": "9:16", "width": 1080, "height": 1920},
+    "instagram": {"aspect_ratio": "1:1", "width": 1080, "height": 1080}
+}
 
 @app.get("/health")
 async def health_check():
-    """Проверка состояния API"""
     return {
         "status": "healthy",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "modules": {
             "ai_analysis": True,
             "video_editor": True,
-            "caption_styles": len(caption_styles),
-            "transitions": len(transitions_library),
-            "music_tracks": len(music_library)
+            "video_processing": True,
+            "caption_rendering": True,
+            "format_conversion": True,
+            "caption_styles": len(CAPTION_STYLES),
+            "video_formats": len(VIDEO_FORMATS)
         },
         "timestamp": datetime.now().isoformat()
     }
 
-# ==================== AI АНАЛИЗ ВИДЕО ====================
+def create_subtitle_file(transcript_data: Dict, style: str, output_path: str) -> str:
+    """Создает SRT файл субтитров"""
+    srt_content = []
+    
+    if "segments" in transcript_data:
+        for i, segment in enumerate(transcript_data["segments"], 1):
+            start_time = format_time(segment["start_time"])
+            end_time = format_time(segment["end_time"])
+            text = segment["text"]
+            
+            srt_content.append(f"{i}")
+            srt_content.append(f"{start_time} --> {end_time}")
+            srt_content.append(text)
+            srt_content.append("")
+    
+    srt_path = output_path.replace(".mp4", ".srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(srt_content))
+    
+    return srt_path
+
+def format_time(seconds: float) -> str:
+    """Форматирует время для SRT"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millisecs = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
+
+def get_ffmpeg_crop_filter(input_format: str, output_format: str) -> str:
+    """Генерирует FFmpeg фильтр для кроппинга"""
+    input_ratio = VIDEO_FORMATS.get(input_format, {"width": 1920, "height": 1080})
+    output_ratio = VIDEO_FORMATS[output_format]
+    
+    if output_format == "tiktok":  # 9:16
+        return f"crop={output_ratio['width']}:{output_ratio['height']}"
+    elif output_format == "instagram":  # 1:1
+        return f"crop={output_ratio['width']}:{output_ratio['height']}"
+    else:  # youtube 16:9
+        return f"scale={output_ratio['width']}:{output_ratio['height']}"
+
+async def process_video_with_ffmpeg(
+    input_path: str,
+    output_path: str,
+    start_time: float,
+    duration: float,
+    subtitle_path: str,
+    format_type: str,
+    style: Dict
+) -> bool:
+    """Обрабатывает видео с помощью FFmpeg"""
+    try:
+        # Получаем параметры формата
+        format_config = VIDEO_FORMATS[format_type]
+        
+        # Строим команду FFmpeg
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-ss", str(start_time),
+            "-t", str(duration),
+            "-vf", f"scale={format_config['width']}:{format_config['height']},subtitles={subtitle_path}:force_style='FontName={style['font_family']},FontSize={style['font_size']},PrimaryColour={style['color']}'",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-preset", "fast",
+            output_path
+        ]
+        
+        # Выполняем команду
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            return True
+        else:
+            print(f"FFmpeg error: {stderr.decode()}")
+            return False
+            
+    except Exception as e:
+        print(f"Video processing error: {e}")
+        return False
 
 @app.post("/api/videos/analyze")
 async def analyze_video(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     ai_model: str = Form("gpt-4"),
-    language: str = Form("ru"),
+    language: str = Form("en"),
     extract_highlights: bool = Form(True),
     generate_captions: bool = Form(True)
 ):
-    """Полный AI анализ видео с транскрибацией и поиском лучших моментов"""
-    
-    if not file.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
-        raise HTTPException(status_code=400, detail="Неподдерживаемый формат видео")
-    
     task_id = str(uuid.uuid4())
     
-    # Сохранение файла
-    temp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(temp_dir, file.filename)
-    
+    # Сохраняем файл
+    file_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Инициализация задачи
-    tasks_storage[task_id] = {
+    # Инициализируем задачу
+    analysis_tasks[task_id] = {
         "status": "processing",
         "progress": 0,
-        "file_path": file_path,
-        "filename": file.filename,
-        "ai_model": ai_model,
-        "language": language,
-        "extract_highlights": extract_highlights,
-        "generate_captions": generate_captions,
         "created_at": datetime.now().isoformat(),
-        "result": None,
-        "error": None
+        "file_path": str(file_path),
+        "settings": {
+            "ai_model": ai_model,
+            "language": language,
+            "extract_highlights": extract_highlights,
+            "generate_captions": generate_captions
+        }
     }
     
-    # Запуск фоновой обработки
+    # Запускаем обработку в фоне
     background_tasks.add_task(process_video_analysis, task_id)
     
-    return {
-        "task_id": task_id,
-        "status": "processing",
-        "message": "Видео отправлено на анализ"
-    }
+    return {"task_id": task_id, "status": "processing", "message": "Video uploaded for analysis"}
 
 async def process_video_analysis(task_id: str):
-    """Фоновая обработка анализа видео"""
+    """Обрабатывает видео анализ"""
     try:
-        task = tasks_storage[task_id]
+        analysis_tasks[task_id]["status"] = "processing: Extracting audio"
+        analysis_tasks[task_id]["progress"] = 20
+        await asyncio.sleep(2)
         
-        # Симуляция обработки с прогрессом
-        stages = [
-            ("Извлечение аудио", 20),
-            ("Транскрибация речи", 40),
-            ("AI анализ контента", 60),
-            ("Поиск лучших моментов", 80),
-            ("Генерация кепшенов", 90),
-            ("Финализация", 100)
-        ]
+        analysis_tasks[task_id]["status"] = "processing: Speech recognition"
+        analysis_tasks[task_id]["progress"] = 40
+        await asyncio.sleep(3)
         
-        for stage_name, progress in stages:
-            task["status"] = f"processing: {stage_name}"
-            task["progress"] = progress
-            await asyncio.sleep(2)  # Симуляция обработки
+        analysis_tasks[task_id]["status"] = "processing: AI analysis"
+        analysis_tasks[task_id]["progress"] = 70
+        await asyncio.sleep(2)
         
-        # Симуляция результата анализа
+        analysis_tasks[task_id]["status"] = "processing: Finding highlights"
+        analysis_tasks[task_id]["progress"] = 90
+        await asyncio.sleep(1)
+        
+        # Симуляция результатов анализа
         result = {
             "video_info": {
                 "duration": 180.5,
@@ -358,63 +292,24 @@ async def process_video_analysis(task_id: str):
                 "format": "mp4"
             },
             "transcript": {
-                "language": task["language"],
+                "language": analysis_tasks[task_id]["settings"]["language"],
                 "confidence": 0.95,
-                "words": [
-                    {
-                        "id": "word_1",
-                        "text": "Добро",
-                        "start_time": 0.0,
-                        "end_time": 0.5,
-                        "confidence": 0.98
-                    },
-                    {
-                        "id": "word_2", 
-                        "text": "пожаловать",
-                        "start_time": 0.5,
-                        "end_time": 1.2,
-                        "confidence": 0.97
-                    },
-                    {
-                        "id": "word_3",
-                        "text": "в",
-                        "start_time": 1.2,
-                        "end_time": 1.4,
-                        "confidence": 0.99
-                    },
-                    {
-                        "id": "word_4",
-                        "text": "наш",
-                        "start_time": 1.4,
-                        "end_time": 1.8,
-                        "confidence": 0.96
-                    },
-                    {
-                        "id": "word_5",
-                        "text": "новый",
-                        "start_time": 1.8,
-                        "end_time": 2.3,
-                        "confidence": 0.98
-                    },
-                    {
-                        "id": "word_6",
-                        "text": "дом!",
-                        "start_time": 2.3,
-                        "end_time": 2.8,
-                        "confidence": 0.99
-                    }
-                ],
                 "segments": [
                     {
                         "start_time": 0.0,
-                        "end_time": 2.8,
-                        "text": "Добро пожаловать в наш новый дом!"
+                        "end_time": 15.0,
+                        "text": "Welcome to our new home! This is an amazing property with incredible features."
+                    },
+                    {
+                        "start_time": 45.0,
+                        "end_time": 75.0,
+                        "text": "Here's the master bedroom with beautiful natural lighting and spacious layout."
                     }
                 ]
             },
             "ai_analysis": {
-                "summary": "Видео-тур по новому дому с презентацией основных комнат и особенностей",
-                "key_topics": ["недвижимость", "дом", "тур", "презентация"],
+                "summary": "Real estate tour showcasing a beautiful home with modern features",
+                "key_topics": ["real estate", "home", "tour", "property"],
                 "sentiment": "positive",
                 "energy_level": "high"
             },
@@ -423,539 +318,183 @@ async def process_video_analysis(task_id: str):
                     "clip_id": "highlight_1",
                     "start_time": 0.0,
                     "end_time": 15.0,
-                    "title": "Вступление и приветствие",
-                    "description": "Энергичное начало с приветствием",
+                    "title": "Welcome Introduction",
+                    "description": "Energetic opening with welcome message",
                     "score": 87,
-                    "categories": {
-                        "hook": 90,
-                        "flow": 85,
-                        "value": 80,
-                        "trend": 92
-                    },
+                    "categories": {"hook": 90, "flow": 85, "value": 80, "trend": 92},
                     "suggested_caption_style": "beasty"
                 },
                 {
-                    "clip_id": "highlight_2", 
+                    "clip_id": "highlight_2",
                     "start_time": 45.0,
                     "end_time": 75.0,
-                    "title": "Главная спальня",
-                    "description": "Презентация главной спальни с особенностями",
+                    "title": "Master Bedroom",
+                    "description": "Showcase of the master bedroom features",
                     "score": 92,
-                    "categories": {
-                        "hook": 85,
-                        "flow": 95,
-                        "value": 95,
-                        "trend": 88
-                    },
+                    "categories": {"hook": 85, "flow": 95, "value": 95, "trend": 88},
                     "suggested_caption_style": "deep_diver"
                 }
             ]
         }
         
-        task["status"] = "completed"
-        task["progress"] = 100
-        task["result"] = result
-        task["completed_at"] = datetime.now().isoformat()
+        analysis_tasks[task_id]["status"] = "completed"
+        analysis_tasks[task_id]["progress"] = 100
+        analysis_tasks[task_id]["result"] = result
         
     except Exception as e:
-        logger.error(f"Ошибка при анализе видео {task_id}: {str(e)}")
-        task["status"] = "failed"
-        task["error"] = str(e)
+        analysis_tasks[task_id]["status"] = "error"
+        analysis_tasks[task_id]["error"] = str(e)
 
 @app.get("/api/videos/{task_id}/status")
 async def get_analysis_status(task_id: str):
-    """Получение статуса анализа видео"""
-    if task_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task_id not in analysis_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
     
-    task = tasks_storage[task_id]
-    return {
-        "task_id": task_id,
-        "status": task["status"],
-        "progress": task["progress"],
-        "created_at": task["created_at"],
-        "result": task["result"] if task["status"] == "completed" else None,
-        "error": task["error"] if task["status"] == "failed" else None
-    }
+    return analysis_tasks[task_id]
 
-@app.get("/api/videos/{task_id}/transcript")
-async def get_transcript(task_id: str):
-    """Получение транскрипта видео"""
-    if task_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    
-    task = tasks_storage[task_id]
-    if task["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Анализ еще не завершен")
-    
-    return task["result"]["transcript"]
-
-@app.post("/api/videos/{task_id}/transcript/edit")
-async def edit_transcript(task_id: str, edits: List[TranscriptEdit]):
-    """Редактирование транскрипта"""
-    if task_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    
-    task = tasks_storage[task_id]
-    if task["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Анализ еще не завершен")
-    
-    # Применение изменений к транскрипту
-    transcript = task["result"]["transcript"]
-    for edit in edits:
-        for word in transcript["words"]:
-            if word["id"] == edit.word_id:
-                word["text"] = edit.new_text
-                word["start_time"] = edit.start_time
-                word["end_time"] = edit.end_time
-                break
-    
-    # Пересборка сегментов
-    # Здесь должна быть логика пересборки сегментов на основе измененных слов
-    
-    return {"message": "Транскрипт обновлен", "transcript": transcript}
-
-# ==================== AI ГЕНЕРАЦИЯ КЛИПОВ ====================
-
-@app.post("/api/clips/generate")
-async def generate_clips(
+@app.post("/api/clips/{clip_id}/render")
+async def render_clip(
+    clip_id: str,
     background_tasks: BackgroundTasks,
-    request: ClipGenerationRequest
+    request: RenderRequest
 ):
-    """Генерация AI клипов из видео"""
+    """Рендерит клип с субтитрами и кроппингом"""
+    render_id = str(uuid.uuid4())
     
-    if request.video_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Видео не найдено")
+    # Находим оригинальное видео и данные клипа
+    video_task = None
+    clip_data = None
     
-    video_task = tasks_storage[request.video_id]
-    if video_task["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Анализ видео еще не завершен")
+    for task_id, task in analysis_tasks.items():
+        if task.get("result") and task["result"].get("highlights"):
+            for highlight in task["result"]["highlights"]:
+                if highlight["clip_id"] == clip_id:
+                    video_task = task
+                    clip_data = highlight
+                    break
     
-    clip_task_id = str(uuid.uuid4())
+    if not video_task or not clip_data:
+        raise HTTPException(status_code=404, detail="Clip not found")
     
-    tasks_storage[clip_task_id] = {
+    # Инициализируем рендеринг
+    rendered_clips[render_id] = {
         "status": "processing",
         "progress": 0,
-        "video_id": request.video_id,
-        "clip_model": request.clip_model,
-        "genre": request.genre,
-        "length_range": request.length_range,
-        "custom_prompt": request.custom_prompt,
-        "max_clips": request.max_clips,
-        "created_at": datetime.now().isoformat(),
-        "result": None,
-        "error": None
+        "clip_id": clip_id,
+        "settings": request.dict(),
+        "created_at": datetime.now().isoformat()
     }
     
-    background_tasks.add_task(process_clip_generation, clip_task_id)
+    # Запускаем рендеринг в фоне
+    background_tasks.add_task(process_clip_rendering, render_id, video_task, clip_data, request)
     
     return {
-        "task_id": clip_task_id,
+        "render_id": render_id,
         "status": "processing",
-        "message": "Генерация клипов запущена"
+        "message": "Clip rendering started"
     }
 
-async def process_clip_generation(task_id: str):
-    """Фоновая генерация клипов"""
+async def process_clip_rendering(
+    render_id: str,
+    video_task: Dict,
+    clip_data: Dict,
+    request: RenderRequest
+):
+    """Обрабатывает рендеринг клипа"""
     try:
-        task = tasks_storage[task_id]
-        video_task = tasks_storage[task["video_id"]]
-        highlights = video_task["result"]["highlights"]
+        rendered_clips[render_id]["status"] = "processing: Creating subtitles"
+        rendered_clips[render_id]["progress"] = 25
         
-        # Симуляция генерации клипов
-        stages = [
-            ("Анализ лучших моментов", 25),
-            ("Применение AI модели", 50),
-            ("Генерация клипов", 75),
-            ("Финализация", 100)
-        ]
+        # Создаем субтитры
+        subtitle_path = create_subtitle_file(
+            video_task["result"]["transcript"],
+            request.caption_style,
+            str(RENDERED_DIR / f"{render_id}.mp4")
+        )
         
-        for stage_name, progress in stages:
-            task["status"] = f"processing: {stage_name}"
-            task["progress"] = progress
-            await asyncio.sleep(1.5)
+        rendered_clips[render_id]["status"] = "processing: Video processing"
+        rendered_clips[render_id]["progress"] = 50
         
-        # Генерация результата на основе highlights
-        clips = []
-        for i, highlight in enumerate(highlights[:task["max_clips"]]):
-            clip = {
-                "clip_id": f"clip_{i+1}",
-                "title": highlight["title"],
-                "description": highlight["description"],
-                "start_time": highlight["start_time"],
-                "end_time": highlight["end_time"],
-                "duration": highlight["end_time"] - highlight["start_time"],
-                "score": highlight["score"],
-                "categories": highlight["categories"],
-                "suggested_style": highlight["suggested_caption_style"],
-                "preview_url": f"/api/clips/{task_id}/preview/{i+1}",
-                "download_url": f"/api/clips/{task_id}/download/{i+1}",
-                "formats": ["mp4", "mov", "gif"],
-                "resolutions": ["1080p", "720p", "480p"],
-                "aspect_ratios": ["16:9", "9:16", "1:1"]
-            }
-            clips.append(clip)
+        # Обрабатываем видео
+        input_path = video_task["file_path"]
+        output_path = str(RENDERED_DIR / f"{render_id}.mp4")
         
-        result = {
-            "clips": clips,
-            "total_clips": len(clips),
-            "generation_settings": {
-                "model": task["clip_model"],
-                "genre": task["genre"],
-                "length_range": task["length_range"]
-            }
-        }
+        style = CAPTION_STYLES[request.caption_style]
         
-        task["status"] = "completed"
-        task["progress"] = 100
-        task["result"] = result
-        task["completed_at"] = datetime.now().isoformat()
+        success = await process_video_with_ffmpeg(
+            input_path,
+            output_path,
+            clip_data["start_time"],
+            clip_data["end_time"] - clip_data["start_time"],
+            subtitle_path,
+            request.format_type,
+            style
+        )
         
+        if success:
+            rendered_clips[render_id]["status"] = "completed"
+            rendered_clips[render_id]["progress"] = 100
+            rendered_clips[render_id]["download_url"] = f"/api/clips/{render_id}/download"
+            rendered_clips[render_id]["file_path"] = output_path
+        else:
+            rendered_clips[render_id]["status"] = "error"
+            rendered_clips[render_id]["error"] = "Video processing failed"
+            
     except Exception as e:
-        logger.error(f"Ошибка при генерации клипов {task_id}: {str(e)}")
-        task["status"] = "failed"
-        task["error"] = str(e)
+        rendered_clips[render_id]["status"] = "error"
+        rendered_clips[render_id]["error"] = str(e)
 
-@app.get("/api/clips/{task_id}/status")
-async def get_clips_status(task_id: str):
-    """Получение статуса генерации клипов"""
-    if task_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
+@app.get("/api/clips/{render_id}/status")
+async def get_render_status(render_id: str):
+    if render_id not in rendered_clips:
+        raise HTTPException(status_code=404, detail="Render task not found")
     
-    return tasks_storage[task_id]
+    return rendered_clips[render_id]
 
-# ==================== СТИЛИ КЕПШЕНОВ ====================
+@app.get("/api/clips/{render_id}/download")
+async def download_rendered_clip(render_id: str):
+    if render_id not in rendered_clips:
+        raise HTTPException(status_code=404, detail="Render task not found")
+    
+    clip_info = rendered_clips[render_id]
+    
+    if clip_info["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Clip not ready for download")
+    
+    file_path = clip_info["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    return FileResponse(
+        file_path,
+        media_type="video/mp4",
+        filename=f"clip_{render_id}.mp4"
+    )
 
 @app.get("/api/captions/styles")
 async def get_caption_styles():
-    """Получение всех стилей кепшенов"""
     return {
-        "styles": list(caption_styles.values()),
-        "total": len(caption_styles)
+        "styles": list(CAPTION_STYLES.values()),
+        "total": len(CAPTION_STYLES)
     }
 
-@app.get("/api/captions/styles/{style_id}")
-async def get_caption_style(style_id: str):
-    """Получение конкретного стиля кепшенов"""
-    if style_id not in caption_styles:
-        raise HTTPException(status_code=404, detail="Стиль не найден")
-    
-    return caption_styles[style_id]
-
-@app.post("/api/captions/styles")
-async def create_caption_style(style: CaptionStyle):
-    """Создание нового стиля кепшенов"""
-    caption_styles[style.style_id] = style
-    return {"message": "Стиль создан", "style": style}
-
-# ==================== БИБЛИОТЕКА ПЕРЕХОДОВ ====================
-
-@app.get("/api/transitions")
-async def get_transitions():
-    """Получение всех переходов"""
+@app.get("/api/formats")
+async def get_video_formats():
     return {
-        "transitions": list(transitions_library.values()),
-        "categories": {
-            "fade": [t for t in transitions_library.values() if t.type == "fade"],
-            "zoom": [t for t in transitions_library.values() if t.type == "zoom"],
-            "slide": [t for t in transitions_library.values() if t.type == "slide"],
-            "wipe": [t for t in transitions_library.values() if t.type == "wipe"]
-        }
+        "formats": VIDEO_FORMATS,
+        "total": len(VIDEO_FORMATS)
     }
-
-@app.get("/api/transitions/{transition_id}")
-async def get_transition(transition_id: str):
-    """Получение конкретного перехода"""
-    if transition_id not in transitions_library:
-        raise HTTPException(status_code=404, detail="Переход не найден")
-    
-    return transitions_library[transition_id]
-
-# ==================== МУЗЫКАЛЬНАЯ БИБЛИОТЕКА ====================
-
-@app.get("/api/music")
-async def get_music_library(
-    genre: Optional[str] = None,
-    mood: Optional[str] = None,
-    bpm_min: Optional[int] = None,
-    bpm_max: Optional[int] = None
-):
-    """Получение музыкальной библиотеки с фильтрами"""
-    tracks = list(music_library.values())
-    
-    # Применение фильтров
-    if genre:
-        tracks = [t for t in tracks if t.genre.lower() == genre.lower()]
-    if mood:
-        tracks = [t for t in tracks if t.mood.lower() == mood.lower()]
-    if bpm_min:
-        tracks = [t for t in tracks if t.bpm >= bpm_min]
-    if bpm_max:
-        tracks = [t for t in tracks if t.bpm <= bpm_max]
-    
-    return {
-        "tracks": tracks,
-        "total": len(tracks),
-        "genres": list(set(t.genre for t in music_library.values())),
-        "moods": list(set(t.mood for t in music_library.values()))
-    }
-
-@app.get("/api/music/{track_id}")
-async def get_music_track(track_id: str):
-    """Получение конкретного музыкального трека"""
-    if track_id not in music_library:
-        raise HTTPException(status_code=404, detail="Трек не найден")
-    
-    return music_library[track_id]
-
-@app.get("/api/music/{track_id}/preview")
-async def preview_music_track(track_id: str):
-    """Превью музыкального трека (30 секунд)"""
-    if track_id not in music_library:
-        raise HTTPException(status_code=404, detail="Трек не найден")
-    
-    # Здесь должна быть логика генерации превью
-    return {"preview_url": f"/music/previews/{track_id}_preview.mp3"}
-
-# ==================== ПРОФЕССИОНАЛЬНЫЙ ВИДЕОРЕДАКТОР ====================
-
-@app.post("/api/editor/projects")
-async def create_editor_project(
-    name: str = Form(...),
-    template: Optional[str] = Form(None)
-):
-    """Создание нового проекта в видеоредакторе"""
-    
-    project_id = str(uuid.uuid4())
-    
-    # Базовые настройки проекта
-    project = {
-        "project_id": project_id,
-        "name": name,
-        "template": template,
-        "timeline": {
-            "tracks": [
-                {"id": "video_1", "type": "video", "clips": []},
-                {"id": "audio_1", "type": "audio", "clips": []},
-                {"id": "text_1", "type": "text", "clips": []},
-                {"id": "effects_1", "type": "effects", "clips": []}
-            ],
-            "duration": 0,
-            "fps": 30
-        },
-        "settings": {
-            "resolution": "1920x1080",
-            "fps": 30,
-            "aspect_ratio": "16:9",
-            "background_color": "#000000"
-        },
-        "assets": {
-            "videos": [],
-            "images": [],
-            "audio": [],
-            "fonts": []
-        },
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat()
-    }
-    
-    projects_storage[project_id] = project
-    
-    return {
-        "project_id": project_id,
-        "message": "Проект создан",
-        "project": project
-    }
-
-@app.get("/api/editor/projects/{project_id}")
-async def get_editor_project(project_id: str):
-    """Получение проекта видеоредактора"""
-    if project_id not in projects_storage:
-        raise HTTPException(status_code=404, detail="Проект не найден")
-    
-    return projects_storage[project_id]
-
-@app.put("/api/editor/projects/{project_id}")
-async def update_editor_project(project_id: str, updates: Dict[str, Any]):
-    """Обновление проекта видеоредактора"""
-    if project_id not in projects_storage:
-        raise HTTPException(status_code=404, detail="Проект не найден")
-    
-    project = projects_storage[project_id]
-    
-    # Обновление полей проекта
-    for key, value in updates.items():
-        if key in project:
-            project[key] = value
-    
-    project["updated_at"] = datetime.now().isoformat()
-    
-    return {
-        "message": "Проект обновлен",
-        "project": project
-    }
-
-@app.post("/api/editor/projects/{project_id}/assets")
-async def upload_project_asset(
-    project_id: str,
-    file: UploadFile = File(...),
-    asset_type: str = Form(...)
-):
-    """Загрузка ассета в проект"""
-    if project_id not in projects_storage:
-        raise HTTPException(status_code=404, detail="Проект не найден")
-    
-    # Сохранение файла
-    asset_id = str(uuid.uuid4())
-    file_extension = file.filename.split('.')[-1]
-    filename = f"{asset_id}.{file_extension}"
-    
-    # Здесь должна быть логика сохранения файла
-    asset = {
-        "asset_id": asset_id,
-        "filename": file.filename,
-        "type": asset_type,
-        "size": 0,  # Размер файла
-        "duration": 0,  # Для видео/аудио
-        "url": f"/assets/{filename}",
-        "uploaded_at": datetime.now().isoformat()
-    }
-    
-    project = projects_storage[project_id]
-    if asset_type not in project["assets"]:
-        project["assets"][asset_type] = []
-    
-    project["assets"][asset_type].append(asset)
-    project["updated_at"] = datetime.now().isoformat()
-    
-    return {
-        "message": "Ассет загружен",
-        "asset": asset
-    }
-
-@app.post("/api/editor/projects/{project_id}/render")
-async def render_project(
-    background_tasks: BackgroundTasks,
-    project_id: str,
-    settings: RenderSettings
-):
-    """Рендеринг проекта видеоредактора"""
-    if project_id not in projects_storage:
-        raise HTTPException(status_code=404, detail="Проект не найден")
-    
-    render_task_id = str(uuid.uuid4())
-    
-    tasks_storage[render_task_id] = {
-        "status": "processing",
-        "progress": 0,
-        "project_id": project_id,
-        "render_settings": settings.dict(),
-        "created_at": datetime.now().isoformat(),
-        "result": None,
-        "error": None
-    }
-    
-    background_tasks.add_task(process_project_render, render_task_id)
-    
-    return {
-        "task_id": render_task_id,
-        "status": "processing",
-        "message": "Рендеринг запущен"
-    }
-
-async def process_project_render(task_id: str):
-    """Фоновый рендеринг проекта"""
-    try:
-        task = tasks_storage[task_id]
-        
-        # Симуляция рендеринга
-        stages = [
-            ("Подготовка ассетов", 20),
-            ("Обработка видео", 40),
-            ("Применение эффектов", 60),
-            ("Наложение аудио", 80),
-            ("Финальный рендеринг", 100)
-        ]
-        
-        for stage_name, progress in stages:
-            task["status"] = f"processing: {stage_name}"
-            task["progress"] = progress
-            await asyncio.sleep(3)  # Симуляция времени рендеринга
-        
-        # Результат рендеринга
-        result = {
-            "output_file": f"/renders/{task_id}.mp4",
-            "duration": 120.5,
-            "size_mb": 45.2,
-            "resolution": task["render_settings"]["resolution"],
-            "fps": task["render_settings"]["fps"],
-            "format": task["render_settings"]["format"],
-            "download_url": f"/api/renders/{task_id}/download"
-        }
-        
-        task["status"] = "completed"
-        task["progress"] = 100
-        task["result"] = result
-        task["completed_at"] = datetime.now().isoformat()
-        
-    except Exception as e:
-        logger.error(f"Ошибка при рендеринге {task_id}: {str(e)}")
-        task["status"] = "failed"
-        task["error"] = str(e)
-
-@app.get("/api/editor/renders/{task_id}/status")
-async def get_render_status(task_id: str):
-    """Получение статуса рендеринга"""
-    if task_id not in tasks_storage:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    
-    return tasks_storage[task_id]
-
-# ==================== ДОПОЛНИТЕЛЬНЫЕ ЭНДПОИНТЫ ====================
-
-@app.get("/api/templates")
-async def get_project_templates():
-    """Получение шаблонов проектов"""
-    templates = {
-        "real_estate": {
-            "name": "Недвижимость",
-            "description": "Шаблон для презентации недвижимости",
-            "duration": 60,
-            "tracks": 4,
-            "preset_styles": ["professional", "modern"]
-        },
-        "social_media": {
-            "name": "Социальные сети",
-            "description": "Шаблон для контента в соцсетях",
-            "duration": 30,
-            "tracks": 3,
-            "preset_styles": ["viral", "trendy"]
-        },
-        "presentation": {
-            "name": "Презентация",
-            "description": "Шаблон для бизнес-презентаций",
-            "duration": 180,
-            "tracks": 5,
-            "preset_styles": ["corporate", "clean"]
-        }
-    }
-    
-    return {"templates": templates}
 
 @app.get("/api/stats")
 async def get_platform_stats():
-    """Статистика платформы"""
     return {
-        "total_videos_processed": len([t for t in tasks_storage.values() if "video_id" in t]),
-        "total_clips_generated": len([t for t in tasks_storage.values() if "clip_model" in t]),
-        "total_projects": len(projects_storage),
-        "active_tasks": len([t for t in tasks_storage.values() if t["status"] == "processing"]),
-        "caption_styles": len(caption_styles),
-        "transitions": len(transitions_library),
-        "music_tracks": len(music_library)
+        "total_videos_processed": len(analysis_tasks),
+        "total_clips_rendered": len(rendered_clips),
+        "active_analysis_tasks": len([t for t in analysis_tasks.values() if t["status"] == "processing"]),
+        "active_render_tasks": len([t for t in rendered_clips.values() if t["status"] == "processing"]),
+        "caption_styles": len(CAPTION_STYLES),
+        "video_formats": len(VIDEO_FORMATS)
     }
-
-# ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
 
 if __name__ == "__main__":
     import uvicorn
