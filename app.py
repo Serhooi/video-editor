@@ -49,7 +49,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.7-critical-fixes")
+app = FastAPI(title="AgentFlow AI Clips", version="15.7.1-segments-fix")
 
 # CORS
 app.add_middleware(
@@ -413,9 +413,9 @@ def transcribe_audio_with_whisper(audio_path):
             "text": transcript.text,
             "segments": [
                 {
-                    "start": segment.start,
-                    "end": segment.end,
-                    "text": segment.text
+                    "start": segment.start if hasattr(segment, 'start') else segment['start'],
+                    "end": segment.end if hasattr(segment, 'end') else segment['end'],
+                    "text": segment.text if hasattr(segment, 'text') else segment['text']
                 }
                 for segment in transcript.segments
             ]
@@ -468,9 +468,9 @@ def transcribe_large_audio_chunked(audio_path):
                 # Добавляем сегменты с корректировкой времени
                 for segment in transcript.segments:
                     all_segments.append({
-                        "start": segment.start + start_time,
-                        "end": segment.end + start_time,
-                        "text": segment.text
+                        "start": (segment.start if hasattr(segment, 'start') else segment['start']) + start_time,
+                        "end": (segment.end if hasattr(segment, 'end') else segment['end']) + start_time,
+                        "text": segment.text if hasattr(segment, 'text') else segment['text']
                     })
                 
                 full_text += " " + transcript.text
@@ -817,7 +817,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.7-critical-fixes",
+            "version": "15.7.1-segments-fix",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1017,7 +1017,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.7 with Critical Fixes started!")
+    logger.info("🚀 AgentFlow AI Clips v15.7.1 with Segments Fix started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
