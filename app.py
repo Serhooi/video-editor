@@ -1,13 +1,12 @@
 """
-AgentFlow AI Clips v15.3.1 - DIAGNOSTIC VERSION
-Полная версия с детальной диагностикой OpenAI API для выявления проблем с Whisper
+AgentFlow AI Clips v15.3.2 - FIXED SEGMENTS FORMAT
+Полная версия с исправленным форматом сегментов Whisper API
 
-ДИАГНОСТИЧЕСКИЕ ВОЗМОЖНОСТИ:
-1. Детальное логирование инициализации OpenAI
-2. Проверка доступности модели whisper-1
-3. Анализ типа API ключа (Project vs Legacy)
-4. Подробные ошибки от Whisper API
-5. Мониторинг всех этапов транскрибации
+ИСПРАВЛЕНИЯ:
+1. Поддержка нового формата сегментов OpenAI API (dict вместо object)
+2. Универсальная обработка сегментов (поддержка старого и нового формата)
+3. Улучшенная обработка ошибок и fallback сегментация
+4. Детальная диагностика для отладки
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -37,7 +36,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.3.1-diagnostic")
+app = FastAPI(title="AgentFlow AI Clips", version="15.3.2")
 
 # CORS
 app.add_middleware(
@@ -336,9 +335,9 @@ def split_audio_into_chunks(audio_path: str, chunk_duration: int = 600) -> List[
         logger.error(f"❌ ДИАГНОСТИКА: Audio chunking failed: {e}")
         return [audio_path]
 
-# ФУНКЦИЯ ТРАНСКРИБАЦИИ ОДНОГО ФАЙЛА - ДИАГНОСТИЧЕСКАЯ ВЕРСИЯ
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ТРАНСКРИБАЦИИ - v15.3.2
 def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional[dict]:
-    """Транскрибация одного аудио файла с детальной диагностикой"""
+    """Транскрибация одного аудио файла с исправленным форматом сегментов"""
     try:
         logger.info(f"🔍 ДИАГНОСТИКА: Начинаем транскрибацию файла {audio_path}")
         
@@ -384,8 +383,20 @@ def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional
                 logger.info(f"✅ ДИАГНОСТИКА: Whisper API ответил успешно!")
                 logger.info(f"📝 ДИАГНОСТИКА: Длина транскрипта: {len(response.text)} символов")
                 
+                # ИСПРАВЛЕНО: Проверяем формат сегментов
+                segments_data = None
                 if hasattr(response, 'segments'):
-                    logger.info(f"📊 ДИАГНОСТИКА: Количество сегментов: {len(response.segments) if response.segments else 0}")
+                    segments_data = response.segments
+                    logger.info(f"📊 ДИАГНОСТИКА: Количество сегментов: {len(segments_data) if segments_data else 0}")
+                    
+                    # Проверяем формат первого сегмента
+                    if segments_data and len(segments_data) > 0:
+                        first_seg = segments_data[0]
+                        if isinstance(first_seg, dict):
+                            logger.info(f"📊 ДИАГНОСТИКА: Сегменты в формате словарей (dict)")
+                        else:
+                            logger.info(f"📊 ДИАГНОСТИКА: Сегменты в формате объектов")
+                            logger.info(f"📊 ДИАГНОСТИКА: Тип сегмента: {type(first_seg)}")
                 else:
                     logger.info(f"⚠️ ДИАГНОСТИКА: Сегменты отсутствуют в ответе")
                 
@@ -409,20 +420,36 @@ def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional
                 
                 return None
         
-        # Обрабатываем сегменты с учетом time_offset
+        # ИСПРАВЛЕНО: Обрабатываем сегменты с учетом нового формата
         segments = []
-        if hasattr(response, 'segments') and response.segments:
-            segments = [
-                {
-                    "start": seg.start + time_offset,
-                    "end": seg.end + time_offset,
-                    "text": seg.text
-                }
-                for seg in response.segments
-            ]
-            logger.info(f"✅ ДИАГНОСТИКА: Обработано {len(segments)} сегментов")
-        else:
-            # Fallback: создаем простые сегменты
+        if segments_data:
+            try:
+                for seg in segments_data:
+                    # Универсальная обработка - поддерживаем и dict и object
+                    if isinstance(seg, dict):
+                        # Новый формат - словарь
+                        segments.append({
+                            "start": seg.get("start", 0) + time_offset,
+                            "end": seg.get("end", 0) + time_offset,
+                            "text": seg.get("text", "")
+                        })
+                    else:
+                        # Старый формат - объект
+                        segments.append({
+                            "start": getattr(seg, 'start', 0) + time_offset,
+                            "end": getattr(seg, 'end', 0) + time_offset,
+                            "text": getattr(seg, 'text', "")
+                        })
+                
+                logger.info(f"✅ ДИАГНОСТИКА: Обработано {len(segments)} сегментов")
+                
+            except Exception as seg_error:
+                logger.error(f"❌ ДИАГНОСТИКА: Ошибка обработки сегментов: {seg_error}")
+                # Fallback к простой сегментации
+                segments = []
+        
+        # Fallback: создаем простые сегменты если основная обработка не сработала
+        if not segments:
             logger.info(f"⚠️ ДИАГНОСТИКА: Используем fallback сегментацию")
             text = response.text
             words = text.split()
@@ -670,7 +697,7 @@ def analyze_video_task(task_id: str, file_path: str):
 async def root():
     return {
         "service": "AgentFlow AI Clips",
-        "version": "15.3.1-diagnostic",
+        "version": "15.3.2",
         "status": "running",
         "features": [
             "Video analysis with Whisper AI",
@@ -681,7 +708,7 @@ async def root():
             "Resource monitoring",
             "Support for long videos (up to 20 min)",
             "Audio chunking for large files",
-            "DIAGNOSTIC MODE - detailed logging"
+            "FIXED: Segments format compatibility"
         ]
     }
 
@@ -704,7 +731,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "version": "15.3.1-diagnostic",
+        "version": "15.3.2",
         "dependencies": deps,
         "system": system_stats,
         "queue": queue_stats
