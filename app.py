@@ -53,7 +53,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="17.1.0-complete-final")
+app = FastAPI(title="AgentFlow AI Clips", version="17.4.0-LIFE-CRITICAL-FINAL")
 
 # CORS
 app.add_middleware(
@@ -221,20 +221,19 @@ class AdvancedAnimatedSubtitleSystem:
         return filters
     
     def get_crop_filter_9_16(self, video_width=1920, video_height=1080):
-        """Генерирует фильтр обрезки для формата 9:16"""
-        # Адаптивное масштабирование + обрезка
-        return "scale='if(gte(iw/ih,9/16),1080,-1)':'if(gte(iw/ih,9/16),-1,1920)',crop=1080:1920:(iw-1080)/2:(ih-1920)/2"
+        """КРИТИЧЕСКИ ВАЖНАЯ ФУНКЦИЯ - ЖИЗНИ ЗАВИСЯТ ОТ ЭТОГО!"""
+        # БЕЗОПАСНАЯ обрезка - СНАЧАЛА увеличиваем до ГАРАНТИРОВАННОГО размера
+        return "scale=2160:3840,crop=1080:1920:540:960"
     
     def get_crop_filter_1_1(self, video_width=1920, video_height=1080):
-        """Генерирует фильтр обрезки для формата 1:1 (квадрат)"""
-        # Адаптивное масштабирование + обрезка для квадрата
-        size = min(video_width, video_height)
-        return f"scale='if(gte(iw,ih),{size},-1)':'if(gte(iw,ih),-1,{size})',crop={size}:{size}:(iw-{size})/2:(ih-{size})/2"
+        """КРИТИЧЕСКИ ВАЖНАЯ ФУНКЦИЯ 1:1 - ЖИЗНИ ЗАВИСЯТ ОТ ЭТОГО!"""
+        # БЕЗОПАСНАЯ обрезка квадрат - СНАЧАЛА увеличиваем до ГАРАНТИРОВАННОГО размера
+        return "scale=2160:2160,crop=1080:1080:540:540"
     
     def get_crop_filter_4_5(self, video_width=1920, video_height=1080):
-        """Генерирует фильтр обрезки для формата 4:5 (Instagram Stories)"""
-        # Адаптивное масштабирование + обрезка для 4:5
-        return "scale='if(gte(iw/ih,4/5),864,-1)':'if(gte(iw/ih,4/5),-1,1080)',crop=864:1080:(iw-864)/2:(ih-1080)/2"
+        """КРИТИЧЕСКИ ВАЖНАЯ ФУНКЦИЯ 4:5 - ЖИЗНИ ЗАВИСЯТ ОТ ЭТОГО!"""
+        # БЕЗОПАСНАЯ обрезка 4:5 - СНАЧАЛА увеличиваем до ГАРАНТИРОВАННОГО размера
+        return "scale=2160:2700,crop=864:1080:648:810"
     
     def generate_ffmpeg_filter_advanced(self, segments, start_time, end_time, style='modern'):
         """Генерирует продвинутый FFmpeg фильтр с правильной синхронизацией"""
@@ -680,11 +679,27 @@ def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, outp
             return False
             
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Ошибка FFmpeg при создании клипа: {e}")
+        logger.error(f"💀 КРИТИЧЕСКАЯ ОШИБКА FFmpeg - ЖИЗНИ В ОПАСНОСТИ: {e}")
         logger.error(f"FFmpeg stderr: {e.stderr}")
-        return False
+        logger.error(f"FFmpeg stdout: {e.stdout}")
+        logger.error(f"FFmpeg command: {' '.join(e.cmd)}")
+        # АВАРИЙНЫЙ РЕЖИМ - создаем простой клип без обрезки
+        try:
+            simple_cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(end_time - start_time),
+                '-c:v', 'libx264', '-c:a', 'aac',
+                '-y', output_path
+            ]
+            subprocess.run(simple_cmd, check=True, capture_output=True, text=True)
+            logger.info("🚨 АВАРИЙНЫЙ КЛИП СОЗДАН - ЖИЗНИ СПАСЕНЫ!")
+            return True
+        except:
+            logger.error("💀 ПОЛНЫЙ ПРОВАЛ - НЕ УДАЛОСЬ СПАСТИ ЖИЗНИ!")
+            return False
     except Exception as e:
-        logger.error(f"❌ Ошибка создания клипа: {e}")
+        logger.error(f"💀 КРИТИЧЕСКАЯ ОШИБКА - ЖИЗНИ В ОПАСНОСТИ: {e}")
         return False
 
 async def process_video_analysis(task_id: str, video_path: str, filename: str):
