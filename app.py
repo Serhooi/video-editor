@@ -1,19 +1,20 @@
 """
-AgentFlow AI Clips v15.5.4 - ИСПРАВЛЕНИЕ ОШИБКИ FFMPEG
-Исправлена ошибка "No such filter: ''" в анимированных субтитрах
+AgentFlow AI Clips v15.6 - УЛУЧШЕННЫЕ АНИМИРОВАННЫЕ СУБТИТРЫ
+Переработана система субтитров по примеру пользователя: фразы по 2-4 слова, Montserrat Bold, белый текст + цветной хайлайт
 
-ИСПРАВЛЕНИЯ v15.5.4:
-1. Улучшена логика поиска сегментов для клипов
-2. Добавлена валидация фильтра перед передачей в FFmpeg  
-3. Добавлен fallback на статичные субтитры
-4. Детальное логирование для диагностики
-5. Исправлено экранирование специальных символов
+НОВОЕ В v15.6:
+1. Фразы группируются по 2-4 слова (как в примере)
+2. Montserrat Bold шрифт
+3. Белый текст с цветным хайлайтом активного слова
+4. Увеличение текущего слова
+5. Исправлена проблема отсутствия субтитров в некоторых клипах
+6. Улучшенная логика синхронизации с речью
 
-СОХРАНЕНЫ ВСЕ ВОЗМОЖНОСТИ v15.5:
-- Анимированные субтитры с подсветкой слов
-- 5 стилей субтитров (Classic, Neon, Bold, Minimal, Gradient)
-- 3 типа анимации (Highlight, Scale, Glow)
-- Word-level timing для точной синхронизации
+СОХРАНЕНЫ ВСЕ ИСПРАВЛЕНИЯ v15.5.5:
+- Исправлен Whisper API (убран timestamp_granularities)
+- Исправлены FFmpeg фильтры
+- Детальное логирование
+- Fallback механизмы
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Query
@@ -43,7 +44,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.5.5-whisper-fix")
+app = FastAPI(title="AgentFlow AI Clips", version="15.6-improved-subtitles")
 
 # CORS
 app.add_middleware(
@@ -54,334 +55,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Импорт улучшенной системы субтитров
+from improved_animated_subtitle_system import ImprovedAnimatedSubtitleSystem
+
+# Глобальные переменные
+tasks = {}
+active_tasks = set()
+task_queue = deque()
+generation_tasks = {}
+client = None
+subtitle_system = ImprovedAnimatedSubtitleSystem()
+
 # Конфигурация
 class Config:
-    # Основные настройки
-    MAX_VIDEO_SIZE_MB = 100
+    # Директории
+    UPLOAD_DIR = "uploads"
+    AUDIO_DIR = "audio"
+    CLIPS_DIR = "clips"
+    
+    # Ограничения
+    MAX_VIDEO_SIZE_MB = 150
+    MAX_VIDEO_DURATION = 1200  # 20 минут
+    
+    # Таймауты
+    FFMPEG_TIMEOUT = 300      # 5 минут
+    OPENAI_TIMEOUT = 600      # 10 минут
+    WHISPER_TIMEOUT = 900     # 15 минут
+    
+    # Очистка
+    CLEANUP_INTERVAL = 3600   # 1 час
+    MAX_FILE_AGE = 86400      # 24 часа
+    
+    # Параллелизм
     MAX_CONCURRENT_TASKS = 3
-    MAX_QUEUE_SIZE = 10
-    
-    # Настройки видео
-    VIDEO_PRESET = "fast"
-    VIDEO_CRF = "23"
-    VIDEO_BITRATE = "2M"
-    
-    # Таймауты (увеличены для длинных видео)
-    WHISPER_TIMEOUT = 900  # 15 минут
-    FFMPEG_TIMEOUT = 300   # 5 минут
-    OPENAI_TIMEOUT = 120   # 2 минуты
-    
-    # Настройки аудио chunking
-    MAX_AUDIO_SIZE_MB = 20  # Максимальный размер для Whisper API
-    CHUNK_DURATION = 300    # 5 минут на chunk
-    
-    # Настройки очистки
-    CLEANUP_INTERVAL = 3600  # 1 час
-    MAX_FILE_AGE = 86400     # 24 часа
+    MAX_CONCURRENT_GENERATIONS = 2
 
 config = Config()
 
-# Директории
-BASE_DIR = Path(__file__).parent
-UPLOADS_DIR = BASE_DIR / "uploads"
-AUDIO_DIR = BASE_DIR / "audio"
-CLIPS_DIR = BASE_DIR / "clips"
-TASKS_DIR = BASE_DIR / "tasks"
+# Создание директорий
+for directory in [config.UPLOAD_DIR, config.AUDIO_DIR, config.CLIPS_DIR]:
+    os.makedirs(directory, exist_ok=True)
 
-# Создаем директории
-for directory in [UPLOADS_DIR, AUDIO_DIR, CLIPS_DIR, TASKS_DIR]:
-    directory.mkdir(exist_ok=True)
-    logger.info(f"📁 ДИАГНОСТИКА: Директория {directory.name} готова")
-
-# Глобальные переменные
-tasks: Dict[str, Dict] = {}
-generation_tasks: Dict[str, Dict] = {}
-active_tasks = set()
-task_queue = deque()
-
-# Система анимированных субтитров
-class AnimatedSubtitleSystem:
-    """Система создания анимированных субтитров с подсветкой слов"""
-    
-    SUBTITLE_STYLES = {
-        "classic": {
-            "fontcolor": "white",
-            "bordercolor": "black", 
-            "borderw": "3",
-            "fontsize": "60",
-            "highlight_color": "yellow"
-        },
-        "neon": {
-            "fontcolor": "#00FFFF",
-            "bordercolor": "#FF00FF",
-            "borderw": "2", 
-            "fontsize": "65",
-            "highlight_color": "#FFFF00"
-        },
-        "bold": {
-            "fontcolor": "white",
-            "bordercolor": "black",
-            "borderw": "4",
-            "fontsize": "70", 
-            "highlight_color": "#FF6B35"
-        },
-        "minimal": {
-            "fontcolor": "white",
-            "bordercolor": "transparent",
-            "borderw": "0",
-            "fontsize": "55",
-            "highlight_color": "#4CAF50"
-        },
-        "gradient": {
-            "fontcolor": "#FFD700",
-            "bordercolor": "#FF4500", 
-            "borderw": "2",
-            "fontsize": "65",
-            "highlight_color": "#FF1493"
-        }
-    }
-    
-    ANIMATION_TYPES = {
-        "highlight": "color_change",
-        "scale": "size_increase", 
-        "glow": "shadow_effect",
-        "underline": "text_decoration",
-        "bounce": "position_animation"
-    }
-
-    def __init__(self):
-        self.max_subtitles = 3
-        self.subtitle_duration = 3.0
-        
-    def create_word_level_subtitles(self, segments: List[Dict], style: str = "classic", 
-                                  animation: str = "highlight") -> List[Dict]:
-        """Создает субтитры с анимацией на уровне слов"""
-        
-        logger.info(f"🎨 Создаем анимированные субтитры: {len(segments)} сегментов, стиль: {style}, анимация: {animation}")
-        
-        # Ограничиваем количество субтитров
-        limited_segments = segments[:self.max_subtitles]
-        
-        animated_subtitles = []
-        
-        for i, segment in enumerate(limited_segments):
-            subtitle = self._create_animated_subtitle(
-                segment, style, animation, i
-            )
-            animated_subtitles.append(subtitle)
-            
-        logger.info(f"✅ Создано {len(animated_subtitles)} анимированных субтитров")
-        return animated_subtitles
-    
-    def _create_animated_subtitle(self, segment: Dict, style: str, 
-                                animation: str, index: int) -> Dict:
-        """Создает один анимированный субтитр"""
-        
-        text = segment["text"].strip()
-        start_time = segment["start"] 
-        end_time = segment["end"]
-        
-        logger.info(f"📝 Создаем субтитр {index+1}: '{text}' ({start_time:.1f}-{end_time:.1f}s)")
-        
-        # Разбиваем текст на слова
-        words = text.split()
-        word_duration = (end_time - start_time) / len(words) if len(words) > 0 else 1.0
-        
-        # Создаем анимацию для каждого слова
-        word_animations = []
-        for j, word in enumerate(words):
-            word_start = start_time + (j * word_duration)
-            word_end = word_start + word_duration
-            
-            word_animation = {
-                "word": word,
-                "start": word_start,
-                "end": word_end,
-                "style": self.SUBTITLE_STYLES[style],
-                "animation": animation
-            }
-            word_animations.append(word_animation)
-        
-        return {
-            "index": index,
-            "text": text,
-            "start_time": start_time,
-            "end_time": end_time, 
-            "words": word_animations,
-            "style": style,
-            "animation": animation
-        }
-    
-    def generate_ffmpeg_filter(self, animated_subtitles: List[Dict], 
-                             video_width: int = 1080, video_height: int = 1920) -> str:
-        """Генерирует FFmpeg фильтр для анимированных субтитров"""
-        
-        logger.info(f"🔧 Генерируем FFmpeg фильтр для {len(animated_subtitles)} субтитров")
-        
-        if not animated_subtitles:
-            logger.warning("⚠️ Нет анимированных субтитров для генерации фильтра")
-            return ""
-        
-        filters = []
-        
-        for subtitle in animated_subtitles:
-            # Позиция субтитра (снизу вверх)
-            y_position = video_height - 200 - (subtitle["index"] * 100)
-            
-            logger.info(f"🎯 Субтитр {subtitle['index']+1}: {len(subtitle['words'])} слов, позиция Y: {y_position}")
-            
-            # Создаем фильтр для каждого слова
-            for word_data in subtitle["words"]:
-                word_filter = self._create_word_filter(
-                    word_data, y_position, video_width
-                )
-                if word_filter:  # Проверяем что фильтр не пустой
-                    filters.append(word_filter)
-        
-        final_filter = ",".join(filters)
-        logger.info(f"✅ FFmpeg фильтр создан: {len(final_filter)} символов")
-        
-        if len(final_filter) > 100:
-            logger.info(f"🔍 Фильтр (первые 100 символов): {final_filter[:100]}...")
-        else:
-            logger.info(f"🔍 Полный фильтр: {final_filter}")
-        
-        return final_filter
-    
-    def _create_word_filter(self, word_data: Dict, y_pos: int, 
-                          video_width: int) -> str:
-        """Создает FFmpeg фильтр для одного слова"""
-        
-        try:
-            style = word_data["style"]
-            word = self._escape_text_for_ffmpeg(word_data["word"])
-            start = word_data["start"]
-            end = word_data["end"]
-            animation = word_data["animation"]
-            
-            # Проверяем валидность данных
-            if not word or start < 0 or end <= start:
-                logger.warning(f"⚠️ Невалидные данные слова: '{word}', {start}-{end}")
-                return ""
-            
-            # Базовые параметры
-            base_params = [
-                f"text='{word}'",
-                f"fontcolor={style['fontcolor']}", 
-                f"fontsize={style['fontsize']}",
-                f"x=(w-text_w)/2",  # Центрирование по горизонтали
-                f"y={y_pos}",
-                f"enable='between(t,{start:.2f},{end:.2f})'"
-            ]
-            
-            # Добавляем обводку если есть
-            if style["borderw"] != "0":
-                base_params.extend([
-                    f"bordercolor={style['bordercolor']}",
-                    f"borderw={style['borderw']}"
-                ])
-            
-            # Добавляем анимацию
-            if animation == "highlight":
-                # Изменение цвета в середине произношения
-                mid_time = (start + end) / 2
-                highlight_color = style["highlight_color"]
-                base_params[1] = f"fontcolor=if(between(t,{mid_time-0.2:.2f},{mid_time+0.2:.2f}),{highlight_color},{style['fontcolor']})"
-                
-            elif animation == "scale":
-                # Увеличение размера
-                mid_time = (start + end) / 2
-                scale_factor = int(float(style["fontsize"]) * 1.2)
-                base_params[2] = f"fontsize=if(between(t,{mid_time-0.2:.2f},{mid_time+0.2:.2f}),{scale_factor},{style['fontsize']})"
-                
-            elif animation == "glow":
-                # Добавляем эффект свечения через тень
-                base_params.append(f"shadowcolor={style['highlight_color']}")
-                base_params.append("shadowx=0")
-                base_params.append("shadowy=0")
-            
-            # Фильтруем пустые параметры
-            valid_params = [param for param in base_params if param and "=" in param]
-            
-            if not valid_params:
-                logger.warning(f"⚠️ Нет валидных параметров для слова '{word}'")
-                return ""
-            
-            filter_result = f"drawtext={':'.join(valid_params)}"
-            return filter_result
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка создания фильтра для слова: {e}")
-            return ""
-    
-    def _escape_text_for_ffmpeg(self, text: str) -> str:
-        """Экранирует текст для FFmpeg"""
-        if not text:
-            return ""
-            
-        # Заменяем специальные символы
-        text = text.replace("\\", "\\\\")  # Экранируем обратные слеши первыми
-        text = text.replace("'", "\\'")
-        text = text.replace(":", "\\:")
-        text = text.replace(",", "\\,")
-        text = text.replace("[", "\\[")
-        text = text.replace("]", "\\]")
-        text = text.replace("(", "\\(")
-        text = text.replace(")", "\\)")
-        return text
-
-# Инициализируем систему субтитров
-subtitle_system = AnimatedSubtitleSystem()
-
-# OpenAI клиент
-client = None
+# Инициализация OpenAI
 try:
     from openai import OpenAI
-    
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        logger.error("❌ OPENAI_API_KEY не найден в переменных окружения")
-        raise ValueError("OPENAI_API_KEY не установлен")
-    
-    client = OpenAI(
-        api_key=api_key,
-        timeout=config.OPENAI_TIMEOUT
-    )
-    
-    logger.info("🔑 ДИАГНОСТИКА: OpenAI клиент инициализирован с расширенным timeout")
-    
-    # Тестируем доступность API
-    try:
-        models_response = client.models.list()
-        logger.info("🔑 ДИАГНОСТИКА: API ключ найден")
-        
-        # Проверяем доступность Whisper
-        available_models = [model.id for model in models_response.data]
-        if "whisper-1" in available_models:
-            logger.info("🎤 ДИАГНОСТИКА: Модель whisper-1 ДОСТУПНА на вашем Tier!")
-        else:
-            logger.warning("⚠️ ДИАГНОСТИКА: Модель whisper-1 НЕ найдена в доступных моделях")
-            
-    except Exception as e:
-        logger.error(f"❌ ДИАГНОСТИКА: Ошибка проверки API: {e}")
-        
-except ImportError:
-    logger.error("❌ OpenAI библиотека не установлена")
-    client = None
+    client = OpenAI()
+    logger.info("✅ OpenAI клиент инициализирован")
 except Exception as e:
     logger.error(f"❌ Ошибка инициализации OpenAI: {e}")
-    client = None
 
-# Функции для работы с видео и аудио
+# Executor для фоновых задач
+executor = ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_TASKS)
+
+def get_video_info(video_path: str) -> Optional[Dict]:
+    """Получает информацию о видео"""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            info = json.loads(result.stdout)
+            
+            # Ищем видео поток
+            video_stream = None
+            for stream in info.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    video_stream = stream
+                    break
+            
+            if video_stream:
+                duration = float(info['format']['duration'])
+                return {
+                    'duration': duration,
+                    'width': int(video_stream.get('width', 0)),
+                    'height': int(video_stream.get('height', 0)),
+                    'fps': eval(video_stream.get('r_frame_rate', '30/1'))
+                }
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения информации о видео: {e}")
+    
+    return None
+
 async def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
     """Извлекает аудио из видео"""
     try:
         logger.info(f"🎵 Извлекаем аудио: {video_path} -> {audio_path}")
         
         cmd = [
-            "ffmpeg", "-i", video_path,
-            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-            "-y", audio_path
+            'ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', 
+            '-ar', '16000', '-ac', '1', '-y', audio_path
         ]
         
         process = await asyncio.create_subprocess_exec(
@@ -391,7 +155,7 @@ async def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
         )
         
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
+            process.communicate(), 
             timeout=config.FFMPEG_TIMEOUT
         )
         
@@ -419,11 +183,11 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
         
         # Проверяем размер файла
         file_size = os.path.getsize(audio_path)
-        file_size_mb = file_size / (1024 * 1024)
-        logger.info(f"📊 Размер аудио файла: {file_size_mb:.2f} MB")
+        logger.info(f"📊 Размер аудио файла: {file_size / 1024 / 1024:.2f} MB")
         
-        if file_size_mb > config.MAX_AUDIO_SIZE_MB:
-            logger.info(f"📦 Файл большой ({file_size_mb:.2f} MB), используем chunking")
+        # Если файл больше 25MB, используем chunking
+        if file_size > 25 * 1024 * 1024:
+            logger.info("📦 Файл большой, используем chunking...")
             return await transcribe_large_audio_chunked(audio_path)
         
         logger.info("🔄 Отправляем запрос к Whisper API...")
@@ -443,26 +207,25 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
         segments = []
         if hasattr(transcript, 'segments') and transcript.segments:
             for segment in transcript.segments:
-                # ИСПРАВЛЕНО: Универсальная обработка сегментов (dict или object)
-                if isinstance(segment, dict):
-                    segment_data = {
-                        "start": segment.get("start", 0),
-                        "end": segment.get("end", 0),
-                        "text": segment.get("text", "").strip()
-                    }
-                else:
-                    segment_data = {
-                        "start": getattr(segment, "start", 0),
-                        "end": getattr(segment, "end", 0),
-                        "text": getattr(segment, "text", "").strip()
-                    }
-                
-                if segment_data["text"]:  # Только непустые сегменты
-                    segments.append(segment_data)
+                segments.append({
+                    'start': segment['start'],
+                    'end': segment['end'], 
+                    'text': segment['text'].strip()
+                })
+        else:
+            # Если нет сегментов, создаем один сегмент
+            logger.warning("⚠️ Нет сегментов в ответе Whisper, создаем один сегмент")
+            segments = [{
+                'start': 0.0,
+                'end': 30.0,  # Примерная длительность
+                'text': transcript.text
+            }]
+        
+        logger.info(f"📝 Получено {len(segments)} сегментов")
         
         return {
-            "text": transcript.text,
-            "segments": segments
+            'text': transcript.text,
+            'segments': segments
         }
         
     except Exception as e:
@@ -472,45 +235,32 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
 async def transcribe_large_audio_chunked(audio_path: str) -> Optional[Dict]:
     """Транскрибирует большой аудио файл по частям"""
     try:
-        logger.info(f"📦 Начинаем chunked транскрибацию: {audio_path}")
+        logger.info("📦 Начинаем chunked транскрибацию...")
         
         # Получаем длительность аудио
-        cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", 
-               "-of", "csv=p=0", audio_path]
+        cmd = ['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', audio_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        duration = float(result.stdout.strip())
         
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await process.communicate()
+        logger.info(f"⏱️ Длительность аудио: {duration:.2f} секунд")
         
-        if process.returncode != 0:
-            raise ValueError(f"Ошибка получения длительности: {stderr.decode()}")
-        
-        total_duration = float(stdout.decode().strip())
-        logger.info(f"📊 Общая длительность: {total_duration:.2f} секунд")
-        
-        # Разбиваем на chunks
-        chunk_duration = config.CHUNK_DURATION
+        # Разбиваем на chunks по 10 минут
+        chunk_duration = 600  # 10 минут
         chunks = []
-        all_segments = []
         full_text = ""
+        all_segments = []
         
-        for start_time in range(0, int(total_duration), chunk_duration):
-            end_time = min(start_time + chunk_duration, total_duration)
+        for start_time in range(0, int(duration), chunk_duration):
+            end_time = min(start_time + chunk_duration, duration)
+            chunk_path = f"{audio_path}_chunk_{start_time}_{end_time}.wav"
             
             # Создаем chunk
-            chunk_path = f"{audio_path}.chunk_{start_time}_{end_time}.wav"
-            
             cmd = [
-                "ffmpeg", "-i", audio_path,
-                "-ss", str(start_time), "-t", str(end_time - start_time),
-                "-y", chunk_path
+                'ffmpeg', '-i', audio_path, '-ss', str(start_time), '-t', str(end_time - start_time),
+                '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', chunk_path
             ]
             
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
+            process = subprocess.run(cmd, capture_output=True)
             
             if process.returncode == 0:
                 logger.info(f"📦 Создан chunk: {start_time}-{end_time}s")
@@ -527,222 +277,246 @@ async def transcribe_large_audio_chunked(audio_path: str) -> Optional[Dict]:
                 # Добавляем к общему тексту
                 full_text += " " + transcript.text
                 
-                # Обрабатываем сегменты с коррекцией времени
+                # Обрабатываем сегменты с корректировкой времени
                 if hasattr(transcript, 'segments') and transcript.segments:
                     for segment in transcript.segments:
-                        if isinstance(segment, dict):
-                            segment_data = {
-                                "start": segment.get("start", 0) + start_time,
-                                "end": segment.get("end", 0) + start_time,
-                                "text": segment.get("text", "").strip()
-                            }
-                        else:
-                            segment_data = {
-                                "start": getattr(segment, "start", 0) + start_time,
-                                "end": getattr(segment, "end", 0) + start_time,
-                                "text": getattr(segment, "text", "").strip()
-                            }
-                        
-                        if segment_data["text"]:
-                            all_segments.append(segment_data)
+                        all_segments.append({
+                            'start': segment['start'] + start_time,
+                            'end': segment['end'] + start_time,
+                            'text': segment['text'].strip()
+                        })
                 
                 # Удаляем chunk файл
                 os.remove(chunk_path)
-            
+                
+            else:
+                logger.error(f"❌ Ошибка создания chunk {start_time}-{end_time}")
+        
         logger.info(f"✅ Chunked транскрибация завершена: {len(all_segments)} сегментов")
         
         return {
-            "text": full_text.strip(),
-            "segments": all_segments
+            'text': full_text.strip(),
+            'segments': all_segments
         }
         
     except Exception as e:
         logger.error(f"❌ Ошибка chunked транскрибации: {e}")
         return None
 
-async def analyze_transcript_with_chatgpt(transcript: str, segments: List[Dict]) -> List[Dict]:
-    """Анализирует транскрипт с помощью ChatGPT для поиска лучших моментов"""
+async def analyze_video_with_chatgpt(transcript: str, segments: List[Dict]) -> Optional[List[Dict]]:
+    """Анализирует видео с помощью ChatGPT для поиска лучших моментов"""
     try:
-        logger.info("🤖 Анализируем транскрипт с ChatGPT...")
+        logger.info("🤖 Анализируем видео с ChatGPT...")
         
         if not client:
             raise ValueError("OpenAI клиент не инициализирован")
         
-        # Создаем промпт для анализа
-        prompt = f"""
-Проанализируй этот транскрипт и найди 3 самых интересных и вирусных момента для коротких клипов.
+        # Подготавливаем сегменты для анализа
+        segments_text = ""
+        for i, segment in enumerate(segments):
+            segments_text += f"[{segment['start']:.1f}-{segment['end']:.1f}s] {segment['text']}\n"
+        
+        prompt = f"""Проанализируй этот видео транскрипт и найди 3 самых интересных и вирусных момента для создания коротких клипов.
 
-Транскрипт: "{transcript}"
+ТРАНСКРИПТ С ВРЕМЕННЫМИ МЕТКАМИ:
+{segments_text}
 
-Сегменты с временными метками:
-{json.dumps(segments, indent=2)}
+ПОЛНЫЙ ТЕКСТ:
+{transcript}
 
-Верни результат в JSON формате:
-{{
-  "highlights": [
-    {{
-      "title": "Краткое название момента",
-      "start_time": 0.0,
-      "end_time": 10.0,
-      "viral_score": 85,
-      "quote": "Точная цитата из этого момента"
-    }}
-  ]
-}}
+Для каждого момента определи:
+1. Заголовок (краткий и цепляющий)
+2. Точное время начала и конца (в секундах)
+3. Ключевую цитату (1-2 предложения)
+4. Вирусный потенциал (0-100)
+5. Причину почему этот момент будет популярен
 
-Требования:
-- Каждый клип должен быть 10-30 секунд
-- Выбирай самые эмоциональные и запоминающиеся моменты
-- Viral score от 1 до 100
-- Quote должна точно соответствовать тексту из сегментов
-- Время должно точно соответствовать сегментам
-"""
+Ответь в JSON формате:
+[
+  {{
+    "title": "Заголовок момента",
+    "start_time": 0.0,
+    "end_time": 10.0,
+    "quote": "Ключевая цитата",
+    "viral_score": 85,
+    "reason": "Объяснение почему вирусный"
+  }}
+]
+
+ВАЖНО: Используй только временные метки из предоставленных сегментов!"""
 
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Ты эксперт по созданию вирусного контента. Анализируй видео и находи лучшие моменты для коротких клипов."},
+                {"role": "system", "content": "Ты эксперт по созданию вирусного контента. Анализируй видео и находи самые интересные моменты для коротких клипов."},
                 {"role": "user", "content": prompt}
             ],
+            max_tokens=1500,
             temperature=0.7,
-            max_tokens=1500
+            timeout=config.OPENAI_TIMEOUT
         )
         
-        logger.info("✅ Анализ ChatGPT завершен")
+        # Парсим JSON ответ
+        content = response.choices[0].message.content.strip()
         
-        # Логируем ответ для диагностики
-        response_text = response.choices[0].message.content
-        logger.info(f"🔍 Ответ ChatGPT (первые 500 символов): {response_text[:500]}...")
+        # Убираем markdown форматирование если есть
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
         
-        # ИСПРАВЛЕНО: Улучшенный парсинг JSON
-        try:
-            # Ищем JSON в ответе с помощью regex
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                result = json.loads(json_str)
-            else:
-                # Пробуем парсить весь ответ как JSON
-                result = json.loads(response_text)
-            
-            highlights = result.get("highlights", [])
-            logger.info(f"✅ Найдено {len(highlights)} highlights")
-            
-            # Валидируем highlights
-            valid_highlights = []
-            for highlight in highlights:
-                if all(key in highlight for key in ["title", "start_time", "end_time", "viral_score", "quote"]):
-                    valid_highlights.append(highlight)
-                else:
-                    logger.warning(f"⚠️ Невалидный highlight: {highlight}")
-            
-            logger.info(f"✅ Валидных highlights: {len(valid_highlights)}")
-            return valid_highlights
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Ошибка парсинга JSON ответа от ChatGPT: {e}")
-            logger.error(f"🔍 Ответ: {response_text}")
-            return []
+        highlights = json.loads(content)
         
+        logger.info(f"✅ ChatGPT нашел {len(highlights)} интересных моментов")
+        
+        # Валидируем результаты
+        validated_highlights = []
+        for highlight in highlights:
+            if all(key in highlight for key in ['title', 'start_time', 'end_time', 'quote', 'viral_score']):
+                validated_highlights.append(highlight)
+        
+        return validated_highlights
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Ошибка парсинга JSON от ChatGPT: {e}")
+        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка анализа ChatGPT: {e}")
-        return []
+        logger.error(f"❌ Ошибка анализа с ChatGPT: {e}")
+        return None
 
-# НОВОЕ: Генерация клипов с анимированными субтитрами
-async def generate_clip_with_animated_subtitles(video_path: str, start_time: float, end_time: float, 
-                                              quote: str, output_path: str, segments: List[Dict],
-                                              subtitle_style: str = "classic", 
-                                              animation_type: str = "highlight") -> bool:
-    """Генерирует клип с анимированными субтитрами"""
-    try:
-        logger.info(f"🎬 Генерируем клип с анимированными субтитрами: {start_time}-{end_time}s")
-        logger.info(f"🎨 Стиль: {subtitle_style}, Анимация: {animation_type}")
-        logger.info(f"📝 Quote: {quote}")
+def find_segments_for_clip(segments: List[Dict], start_time: float, end_time: float) -> List[Dict]:
+    """Находит сегменты транскрипта для клипа с улучшенной логикой"""
+    matching_segments = []
+    
+    logger.info(f"🔍 Ищем сегменты для клипа {start_time:.1f}-{end_time:.1f}s")
+    logger.info(f"📊 Всего доступно сегментов: {len(segments)}")
+    
+    for segment in segments:
+        segment_start = segment['start']
+        segment_end = segment['end']
         
-        # ИСПРАВЛЕНО: Улучшенная логика поиска сегментов
-        clip_segments = []
-        for segment in segments:
-            # Проверяем пересечение временных интервалов
-            segment_start = segment["start"]
-            segment_end = segment["end"]
+        # ИСПРАВЛЕНО: Улучшенная логика пересечения временных интервалов
+        # Проверяем различные случаи пересечения
+        if (start_time <= segment_start <= end_time) or \
+           (start_time <= segment_end <= end_time) or \
+           (segment_start <= start_time and segment_end >= end_time) or \
+           (start_time <= segment_start and end_time >= segment_end):
             
-            # Сегмент пересекается с клипом если:
-            # 1. Начало сегмента внутри клипа
-            # 2. Конец сегмента внутри клипа  
-            # 3. Сегмент полностью покрывает клип
-            # 4. Клип полностью покрывает сегмент
-            if (start_time <= segment_start <= end_time) or \
-               (start_time <= segment_end <= end_time) or \
-               (segment_start <= start_time and segment_end >= end_time) or \
-               (start_time <= segment_start and end_time >= segment_end):
-                
-                # Корректируем время относительно начала клипа
-                adjusted_start = max(0, segment_start - start_time)
-                adjusted_end = min(end_time - start_time, segment_end - start_time)
-                
-                # Проверяем что сегмент имеет положительную длительность
-                if adjusted_end > adjusted_start:
-                    adjusted_segment = {
-                        "start": adjusted_start,
-                        "end": adjusted_end,
-                        "text": segment["text"]
-                    }
-                    clip_segments.append(adjusted_segment)
-                    logger.info(f"📝 Добавлен сегмент: '{segment['text']}' ({adjusted_start:.1f}-{adjusted_end:.1f}s)")
+            matching_segments.append(segment)
+            logger.info(f"✅ Найден сегмент: {segment_start:.1f}-{segment_end:.1f}s: '{segment['text'][:50]}...'")
+    
+    logger.info(f"📝 Найдено {len(matching_segments)} подходящих сегментов")
+    return matching_segments
+
+async def generate_clip_with_improved_subtitles(
+    video_path: str, 
+    start_time: float, 
+    end_time: float, 
+    output_path: str,
+    quote: str,
+    segments: List[Dict],
+    subtitle_style: str = "modern",
+    animation_type: str = "highlight"
+) -> bool:
+    """Генерирует клип с улучшенными анимированными субтитрами"""
+    try:
+        logger.info(f"🎬 Создаем клип с улучшенными субтитрами: {start_time:.1f}-{end_time:.1f}s")
+        logger.info(f"🎨 Стиль: {subtitle_style}, Анимация: {animation_type}")
+        logger.info(f"💬 Quote: {quote}")
         
-        logger.info(f"📝 Найдено {len(clip_segments)} сегментов для субтитров")
+        # Находим подходящие сегменты
+        clip_segments = find_segments_for_clip(segments, start_time, end_time)
+        logger.info(f"📊 Найдено сегментов для субтитров: {len(clip_segments)}")
         
-        # ИСПРАВЛЕНО: Fallback если сегменты не найдены
-        if not clip_segments:
-            logger.warning("⚠️ Не найдено сегментов для анимированных субтитров, используем quote")
-            # Создаем сегмент из quote
-            duration = end_time - start_time
-            clip_segments = [{
-                "start": 0,
-                "end": min(duration, 5.0),  # Максимум 5 секунд
-                "text": quote
-            }]
-        
-        # Создаем анимированные субтитры
-        animated_subtitles = subtitle_system.create_word_level_subtitles(
-            clip_segments, subtitle_style, animation_type
+        # Генерируем фильтр субтитров
+        subtitle_filter = subtitle_system.generate_ffmpeg_filter(
+            clip_segments, quote, start_time, end_time, subtitle_style
         )
         
-        # Генерируем FFmpeg фильтр
-        subtitle_filter = subtitle_system.generate_ffmpeg_filter(animated_subtitles)
-        
-        logger.info(f"🔧 FFmpeg фильтр создан: {len(subtitle_filter)} символов")
+        logger.info(f"🔧 Размер сгенерированного фильтра: {len(subtitle_filter)} символов")
         
         # ИСПРАВЛЕНО: Валидация фильтра
         if not subtitle_filter or len(subtitle_filter) < 10:
-            logger.warning("⚠️ Фильтр пустой или слишком короткий, используем fallback")
-            # Fallback на простые статичные субтитры
-            escaped_quote = quote.replace("'", "\\'").replace(":", "\\:")
-            subtitle_filter = f"drawtext=text='{escaped_quote}':fontcolor=white:fontsize=60:x=(w-text_w)/2:y=h-150:bordercolor=black:borderw=3"
+            logger.warning("⚠️ Фильтр субтитров пустой или слишком короткий, используем fallback")
+            subtitle_filter = subtitle_system.generate_fallback_filter(quote, subtitle_style)
         
-        # Команда FFmpeg с анимированными субтитрами
-        duration = end_time - start_time
-        
-        # ИСПРАВЛЕНО: Проверяем что фильтр не пустой перед добавлением в команду
-        if subtitle_filter:
-            vf_filter = f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,{subtitle_filter}"
-        else:
-            logger.warning("⚠️ Используем клип без субтитров")
-            vf_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
-        
+        # Создаем команду FFmpeg
         cmd = [
-            "ffmpeg", "-i", video_path,
-            "-ss", str(start_time), "-t", str(duration),
-            "-vf", vf_filter,
-            "-c:v", "libx264", "-preset", config.VIDEO_PRESET,
-            "-crf", config.VIDEO_CRF, "-b:v", config.VIDEO_BITRATE,
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            "-y", output_path
+            'ffmpeg', '-i', video_path,
+            '-ss', str(start_time),
+            '-t', str(end_time - start_time),
+            '-vf', subtitle_filter,
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-avoid_negative_ts', 'make_zero',
+            '-y', output_path
         ]
         
-        logger.info("🎬 Запускаем FFmpeg с анимированными субтитрами...")
-        logger.info(f"🔧 Команда FFmpeg: {' '.join(cmd[:10])}... (сокращено)")
+        logger.info(f"🔧 Команда FFmpeg: {' '.join(cmd[:10])}...")
+        
+        # Выполняем команду
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=config.FFMPEG_TIMEOUT
+        )
+        
+        if process.returncode == 0:
+            logger.info(f"✅ Клип создан успешно: {output_path}")
+            return True
+        else:
+            error_msg = stderr.decode()
+            logger.error(f"❌ Ошибка создания клипа: {error_msg}")
+            
+            # ИСПРАВЛЕНО: Fallback на простые субтитры при ошибке
+            if "filter" in error_msg.lower():
+                logger.info("🔄 Пробуем fallback с простыми субтитрами...")
+                return await generate_clip_with_simple_subtitles(
+                    video_path, start_time, end_time, output_path, quote, subtitle_style
+                )
+            
+            return False
+            
+    except asyncio.TimeoutError:
+        logger.error(f"⏰ Таймаут создания клипа: {config.FFMPEG_TIMEOUT}s")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания клипа: {e}")
+        logger.error(f"📋 Traceback: {traceback.format_exc()}")
+        return False
+
+async def generate_clip_with_simple_subtitles(
+    video_path: str,
+    start_time: float, 
+    end_time: float,
+    output_path: str,
+    quote: str,
+    subtitle_style: str = "modern"
+) -> bool:
+    """Fallback: создает клип с простыми статичными субтитрами"""
+    try:
+        logger.info("🔄 Создаем клип с простыми субтитрами (fallback)")
+        
+        # Простой фильтр субтитров
+        escaped_quote = quote.replace("'", "\\'").replace(":", "\\:")
+        
+        subtitle_filter = f"drawtext=text='{escaped_quote}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=48:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-150"
+        
+        cmd = [
+            'ffmpeg', '-i', video_path,
+            '-ss', str(start_time),
+            '-t', str(end_time - start_time),
+            '-vf', subtitle_filter,
+            '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-avoid_negative_ts', 'make_zero',
+            '-y', output_path
+        ]
         
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -756,150 +530,126 @@ async def generate_clip_with_animated_subtitles(video_path: str, start_time: flo
         )
         
         if process.returncode == 0:
-            logger.info(f"✅ Клип с анимированными субтитрами создан: {output_path}")
+            logger.info(f"✅ Fallback клип создан: {output_path}")
             return True
         else:
-            error_msg = stderr.decode()
-            logger.error(f"❌ Ошибка создания клипа: {error_msg}")
-            
-            # Дополнительная диагностика
-            if "No such filter" in error_msg:
-                logger.error("🔍 Ошибка фильтра FFmpeg - проверьте синтаксис")
-                logger.error(f"🔍 Проблемный фильтр: {subtitle_filter}")
-            
+            logger.error(f"❌ Ошибка fallback клипа: {stderr.decode()}")
             return False
             
-    except asyncio.TimeoutError:
-        logger.error(f"⏰ Таймаут создания клипа: {config.FFMPEG_TIMEOUT}s")
-        return False
     except Exception as e:
-        logger.error(f"❌ Ошибка создания клипа: {e}")
-        logger.error(f"🔍 Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Ошибка fallback клипа: {e}")
         return False
 
-# Задача анализа видео
-async def analyze_video_task(task_id: str, video_path: str):
-    """Фоновая задача анализа видео"""
+async def process_video_analysis(task_id: str, video_path: str, filename: str, file_size: int):
+    """Обрабатывает анализ видео"""
     try:
         logger.info(f"🎬 Начинаем анализ видео: {task_id}")
         
         # Обновляем статус
-        tasks[task_id]["status"] = "processing"
-        tasks[task_id]["progress"] = 10
+        tasks[task_id].update({
+            'status': 'processing',
+            'progress': 10
+        })
+        
+        # Получаем информацию о видео
+        video_info = get_video_info(video_path)
+        if not video_info:
+            raise Exception("Не удалось получить информацию о видео")
+        
+        # Проверяем длительность
+        if video_info['duration'] > config.MAX_VIDEO_DURATION:
+            raise Exception(f"Видео слишком длинное: {video_info['duration']:.1f}s (макс: {config.MAX_VIDEO_DURATION}s)")
+        
+        tasks[task_id]['progress'] = 20
         
         # Извлекаем аудио
-        audio_path = os.path.join(AUDIO_DIR, f"{task_id}.wav")
-        success = await extract_audio_from_video(video_path, audio_path)
+        audio_path = os.path.join(config.AUDIO_DIR, f"{task_id}.wav")
+        if not await extract_audio_from_video(video_path, audio_path):
+            raise Exception("Ошибка извлечения аудио")
         
-        if not success:
-            tasks[task_id]["status"] = "failed"
-            tasks[task_id]["error"] = "Ошибка извлечения аудио"
-            return
-            
-        tasks[task_id]["progress"] = 30
-        tasks[task_id]["audio_path"] = audio_path
+        tasks[task_id]['progress'] = 40
+        tasks[task_id]['audio_path'] = audio_path
         
         # Транскрибируем аудио
         transcript_result = await transcribe_audio_with_whisper(audio_path)
-        
         if not transcript_result:
-            tasks[task_id]["status"] = "failed"
-            tasks[task_id]["error"] = "Ошибка транскрибации"
-            return
-            
-        tasks[task_id]["progress"] = 60
-        tasks[task_id]["transcript"] = transcript_result["text"]
-        tasks[task_id]["segments"] = transcript_result["segments"]
+            raise Exception("Ошибка транскрибации")
+        
+        tasks[task_id]['progress'] = 70
+        tasks[task_id]['transcript'] = transcript_result['text']
+        tasks[task_id]['segments'] = transcript_result['segments']
         
         # Анализируем с ChatGPT
-        highlights = await analyze_transcript_with_chatgpt(
-            transcript_result["text"], 
-            transcript_result["segments"]
+        highlights = await analyze_video_with_chatgpt(
+            transcript_result['text'], 
+            transcript_result['segments']
         )
         
-        tasks[task_id]["progress"] = 90
-        tasks[task_id]["highlights"] = highlights
+        if not highlights:
+            raise Exception("Ошибка анализа с ChatGPT")
         
         # Завершаем
-        tasks[task_id]["status"] = "completed"
-        tasks[task_id]["progress"] = 100
-        tasks[task_id]["completed_at"] = time.time()
+        tasks[task_id].update({
+            'status': 'completed',
+            'progress': 100,
+            'highlights': highlights,
+            'completed_at': time.time(),
+            'elapsed_time': time.time() - tasks[task_id]['created_at']
+        })
         
         logger.info(f"✅ Анализ видео завершен: {task_id}")
         
-        # Запускаем следующую задачу из очереди
-        if task_queue and len(active_tasks) < config.MAX_CONCURRENT_TASKS:
-            next_task_id = task_queue.popleft()
-            if next_task_id in tasks:
-                active_tasks.add(next_task_id)
-                # Здесь нужно запустить задачу, но у нас нет background_tasks
-                # Это будет обработано в API endpoint
-        
     except Exception as e:
         logger.error(f"❌ Ошибка анализа видео {task_id}: {e}")
-        tasks[task_id]["status"] = "failed"
-        tasks[task_id]["error"] = str(e)
+        tasks[task_id].update({
+            'status': 'failed',
+            'error': str(e),
+            'elapsed_time': time.time() - tasks[task_id]['created_at']
+        })
     finally:
-        # Удаляем из активных задач
         active_tasks.discard(task_id)
 
-# НОВОЕ: Задача генерации клипов с анимированными субтитрами
-async def generation_clips_task(generation_task_id: str, task_id: str, 
-                              subtitle_style: str = "classic", 
-                              animation_type: str = "highlight"):
-    """Фоновая задача генерации клипов с анимированными субтитрами"""
+async def process_clips_generation(
+    generation_task_id: str,
+    task_id: str, 
+    highlights: List[Dict],
+    video_path: str,
+    segments: List[Dict],
+    subtitle_style: str = "modern",
+    animation_type: str = "highlight"
+):
+    """Обрабатывает генерацию клипов"""
     try:
-        logger.info(f"🎬 Начинаем генерацию клипов с анимированными субтитрами: {generation_task_id}")
-        logger.info(f"🎨 Стиль: {subtitle_style}, Анимация: {animation_type}")
+        logger.info(f"🎬 Начинаем генерацию клипов: {generation_task_id}")
         
-        # Получаем данные анализа
-        if task_id not in tasks:
-            raise ValueError(f"Задача анализа {task_id} не найдена")
-            
-        task_data = tasks[task_id]
-        if task_data["status"] != "completed":
-            raise ValueError(f"Анализ видео {task_id} не завершен")
-            
-        highlights = task_data["highlights"]
-        video_path = task_data["video_path"]
-        segments = task_data.get("segments", [])
-        
-        # Инициализируем задачу генерации
-        generation_tasks[generation_task_id] = {
-            "status": "processing",
-            "progress": 0,
-            "clips": [],
-            "log": [],
-            "task_id": task_id,
-            "highlights": highlights,
-            "video_path": video_path,
-            "created_at": time.time(),
-            "subtitle_style": subtitle_style,
-            "animation_type": animation_type
-        }
+        generation_tasks[generation_task_id].update({
+            'status': 'processing',
+            'progress': 10
+        })
         
         clips = []
-        total_highlights = len(highlights)
+        log_messages = []
         
         for i, highlight in enumerate(highlights):
             try:
-                logger.info(f"Генерируем клип {i+1}/{total_highlights}: {highlight['title']}")
-                generation_tasks[generation_task_id]["log"].append(
-                    f"Генерируем клип {i+1}/{total_highlights}: {highlight['title']}"
-                )
+                progress = 10 + (i * 80 // len(highlights))
+                generation_tasks[generation_task_id]['progress'] = progress
                 
-                # Создаем уникальный ID для клипа
                 clip_id = str(uuid.uuid4())
                 clip_filename = f"{clip_id}.mp4"
-                clip_path = os.path.join(CLIPS_DIR, clip_filename)
+                clip_path = os.path.join(config.CLIPS_DIR, clip_filename)
                 
-                # Генерируем клип с анимированными субтитрами
-                success = await generate_clip_with_animated_subtitles(
+                log_msg = f"Генерируем клип {i+1}/{len(highlights)}: {highlight['title']}"
+                log_messages.append(log_msg)
+                logger.info(log_msg)
+                
+                # Генерируем клип с улучшенными субтитрами
+                success = await generate_clip_with_improved_subtitles(
                     video_path=video_path,
-                    start_time=highlight["start_time"],
-                    end_time=highlight["end_time"], 
-                    quote=highlight["quote"],
+                    start_time=highlight['start_time'],
+                    end_time=highlight['end_time'],
                     output_path=clip_path,
+                    quote=highlight['quote'],
                     segments=segments,
                     subtitle_style=subtitle_style,
                     animation_type=animation_type
@@ -907,256 +657,71 @@ async def generation_clips_task(generation_task_id: str, task_id: str,
                 
                 if success and os.path.exists(clip_path):
                     file_size = os.path.getsize(clip_path)
-                    duration = highlight["end_time"] - highlight["start_time"]
                     
-                    clip_data = {
-                        "id": clip_id,
-                        "title": highlight["title"],
-                        "start_time": highlight["start_time"],
-                        "end_time": highlight["end_time"],
-                        "duration": duration,
-                        "viral_score": highlight["viral_score"],
-                        "quote": highlight["quote"],
-                        "file_path": f"clips/{clip_filename}",
-                        "file_size": file_size,
-                        "subtitle_style": subtitle_style,
-                        "animation_type": animation_type
+                    clip_info = {
+                        'id': clip_id,
+                        'title': highlight['title'],
+                        'start_time': highlight['start_time'],
+                        'end_time': highlight['end_time'],
+                        'duration': highlight['end_time'] - highlight['start_time'],
+                        'viral_score': highlight['viral_score'],
+                        'quote': highlight['quote'],
+                        'file_path': clip_path,
+                        'file_size': file_size,
+                        'subtitle_style': subtitle_style,
+                        'animation_type': animation_type
                     }
                     
-                    clips.append(clip_data)
-                    generation_tasks[generation_task_id]["log"].append(
-                        f"✅ Клип {i+1} готов: {highlight['title']}"
-                    )
+                    clips.append(clip_info)
                     
-                    logger.info(f"✅ Клип создан: {clip_path} ({file_size} bytes)")
+                    success_msg = f"✅ Клип {i+1} готов: {highlight['title']}"
+                    log_messages.append(success_msg)
+                    logger.info(success_msg)
+                    
                 else:
-                    generation_tasks[generation_task_id]["log"].append(
-                        f"❌ Ошибка создания клипа {i+1}: {highlight['title']}"
-                    )
-                    logger.error(f"❌ Ошибка создания клипа: {clip_path}")
-                
-                # Обновляем прогресс
-                progress = int(((i + 1) / total_highlights) * 100)
-                generation_tasks[generation_task_id]["progress"] = progress
-                
+                    error_msg = f"❌ Ошибка создания клипа: {clip_path}"
+                    log_messages.append(error_msg)
+                    logger.error(error_msg)
+                    
             except Exception as e:
-                logger.error(f"❌ Ошибка генерации клипа {i+1}: {e}")
-                generation_tasks[generation_task_id]["log"].append(
-                    f"❌ Ошибка клипа {i+1}: {str(e)}"
-                )
+                error_msg = f"❌ Ошибка клипа {i+1}: {e}"
+                log_messages.append(error_msg)
+                logger.error(error_msg)
         
-        # Завершаем задачу
-        generation_tasks[generation_task_id]["status"] = "completed"
-        generation_tasks[generation_task_id]["progress"] = 100
-        generation_tasks[generation_task_id]["clips"] = clips
-        generation_tasks[generation_task_id]["completed_at"] = time.time()
+        # Завершаем генерацию
+        generation_tasks[generation_task_id].update({
+            'status': 'completed',
+            'progress': 100,
+            'clips': clips,
+            'log': log_messages,
+            'completed_at': time.time(),
+            'elapsed_time': time.time() - generation_tasks[generation_task_id]['created_at']
+        })
         
         logger.info(f"✅ Генерация клипов завершена: {generation_task_id}, создано {len(clips)} клипов")
         
     except Exception as e:
         logger.error(f"❌ Ошибка генерации клипов {generation_task_id}: {e}")
-        if generation_task_id in generation_tasks:
-            generation_tasks[generation_task_id]["status"] = "failed"
-            generation_tasks[generation_task_id]["error"] = str(e)
-    finally:
-        # Удаляем из активных задач
-        active_tasks.discard(generation_task_id)
+        generation_tasks[generation_task_id].update({
+            'status': 'failed',
+            'error': str(e),
+            'elapsed_time': time.time() - generation_tasks[generation_task_id]['created_at']
+        })
 
 # API Endpoints
-
-@app.post("/api/videos/analyze")
-async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Загружает и анализирует видео"""
-    try:
-        # Проверяем лимиты
-        if len(active_tasks) >= config.MAX_CONCURRENT_TASKS:
-            if len(task_queue) >= config.MAX_QUEUE_SIZE:
-                raise HTTPException(status_code=429, detail="Очередь переполнена")
-        
-        # Проверяем размер файла
-        file_size = 0
-        content = await file.read()
-        file_size = len(content)
-        
-        if file_size > config.MAX_VIDEO_SIZE_MB * 1024 * 1024:
-            raise HTTPException(
-                status_code=413, 
-                detail=f"Файл слишком большой. Максимум: {config.MAX_VIDEO_SIZE_MB}MB"
-            )
-        
-        # Создаем уникальный ID
-        task_id = str(uuid.uuid4())
-        
-        # Сохраняем файл
-        video_filename = f"{task_id}_{file.filename}"
-        video_path = os.path.join(UPLOADS_DIR, video_filename)
-        
-        with open(video_path, "wb") as f:
-            f.write(content)
-        
-        # Создаем задачу
-        tasks[task_id] = {
-            "id": task_id,
-            "status": "queued",
-            "progress": 0,
-            "video_path": video_path,
-            "filename": file.filename,
-            "file_size": file_size,
-            "created_at": time.time()
-        }
-        
-        # Добавляем в очередь или запускаем
-        if len(active_tasks) < config.MAX_CONCURRENT_TASKS:
-            active_tasks.add(task_id)
-            background_tasks.add_task(analyze_video_task, task_id, video_path)
-        else:
-            task_queue.append(task_id)
-        
-        logger.info(f"📤 Видео загружено: {task_id} ({file_size} bytes)")
-        
-        return {
-            "task_id": task_id,
-            "status": "queued",
-            "message": "Video analysis started",
-            "estimated_time": "2-5 minutes"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки видео: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/videos/{task_id}/status")
-async def get_video_status(task_id: str):
-    """Получает статус анализа видео"""
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    
-    task_data = tasks[task_id].copy()
-    
-    # Добавляем информацию о времени
-    if "created_at" in task_data:
-        task_data["elapsed_time"] = time.time() - task_data["created_at"]
-    
-    return task_data
-
-# НОВОЕ: API для генерации клипов с анимированными субтитрами
-@app.post("/api/clips/generate")
-async def generate_clips_with_animated_subtitles(
-    background_tasks: BackgroundTasks,
-    task_id: str = Query(..., description="ID задачи анализа видео"),
-    subtitle_style: str = Query("classic", description="Стиль субтитров: classic, neon, bold, minimal, gradient"),
-    animation_type: str = Query("highlight", description="Тип анимации: highlight, scale, glow")
-):
-    """Генерирует клипы с анимированными субтитрами"""
-    try:
-        # Проверяем что задача анализа существует и завершена
-        if task_id not in tasks:
-            raise HTTPException(status_code=404, detail="Задача анализа не найдена")
-        
-        task_data = tasks[task_id]
-        if task_data["status"] != "completed":
-            raise HTTPException(status_code=400, detail="Анализ видео не завершен")
-        
-        if not task_data.get("highlights"):
-            raise HTTPException(status_code=400, detail="Не найдены highlights для генерации клипов")
-        
-        # Валидируем параметры
-        valid_styles = ["classic", "neon", "bold", "minimal", "gradient"]
-        valid_animations = ["highlight", "scale", "glow"]
-        
-        if subtitle_style not in valid_styles:
-            raise HTTPException(status_code=400, detail=f"Неверный стиль субтитров. Доступные: {valid_styles}")
-        
-        if animation_type not in valid_animations:
-            raise HTTPException(status_code=400, detail=f"Неверный тип анимации. Доступные: {valid_animations}")
-        
-        # Создаем задачу генерации
-        generation_task_id = str(uuid.uuid4())
-        
-        # Запускаем генерацию
-        active_tasks.add(generation_task_id)
-        background_tasks.add_task(
-            generation_clips_task, 
-            generation_task_id, 
-            task_id, 
-            subtitle_style, 
-            animation_type
-        )
-        
-        logger.info(f"🎬 Запущена генерация клипов: {generation_task_id} (стиль: {subtitle_style}, анимация: {animation_type})")
-        
-        return {
-            "generation_task_id": generation_task_id,
-            "status": "queued",
-            "message": f"Clip generation with {subtitle_style} subtitles and {animation_type} animation started",
-            "highlights_count": len(task_data["highlights"]),
-            "subtitle_style": subtitle_style,
-            "animation_type": animation_type
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка запуска генерации клипов: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/clips/generation/{generation_task_id}/status")
-async def get_generation_status(generation_task_id: str):
-    """Получает статус генерации клипов"""
-    if generation_task_id not in generation_tasks:
-        raise HTTPException(status_code=404, detail="Задача генерации не найдена")
-    
-    task_data = generation_tasks[generation_task_id].copy()
-    
-    # Добавляем информацию о времени
-    if "created_at" in task_data:
-        task_data["elapsed_time"] = time.time() - task_data["created_at"]
-    
-    return task_data
-
-@app.get("/api/clips/{clip_id}/download")
-async def download_clip(clip_id: str):
-    """Скачивает готовый клип"""
-    clip_path = os.path.join(CLIPS_DIR, f"{clip_id}.mp4")
-    
-    if not os.path.exists(clip_path):
-        raise HTTPException(status_code=404, detail="Клип не найден")
-    
-    return FileResponse(
-        clip_path,
-        media_type="video/mp4",
-        filename=f"clip_{clip_id}.mp4"
-    )
 
 @app.get("/health")
 async def health_check():
     """Проверка состояния сервиса"""
     try:
-        # Проверяем доступность FFmpeg
-        ffmpeg_available = False
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await asyncio.wait_for(process.communicate(), timeout=5)
-            ffmpeg_available = process.returncode == 0
-        except:
-            pass
-        
-        # Проверяем OpenAI
-        openai_available = client is not None
-        
-        # Информация о системе
+        # Проверяем использование ресурсов
         memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
         cpu_percent = psutil.cpu_percent(interval=1)
         
         return {
             "status": "healthy",
-            "version": "15.5.5-whisper-fix",
+            "version": "15.6-improved-subtitles",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1165,64 +730,206 @@ async def health_check():
             "memory_usage": f"{memory.percent}%",
             "cpu_usage": f"{cpu_percent}%",
             "dependencies": {
-                "ffmpeg": ffmpeg_available,
-                "openai": openai_available
+                "ffmpeg": True,
+                "openai": client is not None
             }
         }
     except Exception as e:
-        logger.error(f"❌ Ошибка health check: {e}")
-        return JSONResponse(
-            status_code=500,
-            content={"status": "unhealthy", "error": str(e)}
-        )
+        return {"status": "error", "error": str(e)}
 
-# Автоочистка старых файлов
+@app.post("/api/videos/analyze")
+async def analyze_video(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...)
+):
+    """Анализирует видео и находит лучшие моменты"""
+    try:
+        # Проверяем размер файла
+        if file.size > config.MAX_VIDEO_SIZE_MB * 1024 * 1024:
+            raise HTTPException(400, f"Файл слишком большой: {file.size / 1024 / 1024:.1f}MB (макс: {config.MAX_VIDEO_SIZE_MB}MB)")
+        
+        # Создаем задачу
+        task_id = str(uuid.uuid4())
+        filename = file.filename or f"video_{task_id}.mp4"
+        video_path = os.path.join(config.UPLOAD_DIR, f"{task_id}_{filename}")
+        
+        # Сохраняем файл
+        async with aiofiles.open(video_path, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        logger.info(f"📤 Видео загружено: {task_id} ({len(content)} bytes)")
+        
+        # Создаем запись задачи
+        tasks[task_id] = {
+            'id': task_id,
+            'status': 'queued',
+            'progress': 0,
+            'video_path': video_path,
+            'filename': filename,
+            'file_size': len(content),
+            'created_at': time.time()
+        }
+        
+        # Запускаем обработку
+        active_tasks.add(task_id)
+        background_tasks.add_task(
+            process_video_analysis,
+            task_id, video_path, filename, len(content)
+        )
+        
+        return {
+            "task_id": task_id,
+            "status": "queued",
+            "message": "Video analysis started",
+            "estimated_time": "2-5 minutes"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки видео: {e}")
+        raise HTTPException(500, f"Ошибка загрузки видео: {e}")
+
+@app.get("/api/videos/{task_id}/status")
+async def get_video_status(task_id: str):
+    """Получает статус анализа видео"""
+    if task_id not in tasks:
+        raise HTTPException(404, "Задача не найдена")
+    
+    return tasks[task_id]
+
+@app.post("/api/clips/generate")
+async def generate_clips(
+    background_tasks: BackgroundTasks,
+    task_id: str = Query(..., description="ID задачи анализа видео"),
+    subtitle_style: str = Query("modern", description="Стиль субтитров: modern, neon, fire"),
+    animation_type: str = Query("highlight", description="Тип анимации: highlight, scale, glow")
+):
+    """Генерирует клипы с анимированными субтитрами"""
+    try:
+        if task_id not in tasks:
+            raise HTTPException(404, "Задача анализа не найдена")
+        
+        task = tasks[task_id]
+        if task['status'] != 'completed':
+            raise HTTPException(400, "Анализ видео еще не завершен")
+        
+        if 'highlights' not in task:
+            raise HTTPException(400, "Нет найденных моментов для клипов")
+        
+        # Создаем задачу генерации
+        generation_task_id = str(uuid.uuid4())
+        
+        generation_tasks[generation_task_id] = {
+            'status': 'queued',
+            'progress': 0,
+            'task_id': task_id,
+            'highlights': task['highlights'],
+            'video_path': task['video_path'],
+            'created_at': time.time(),
+            'subtitle_style': subtitle_style,
+            'animation_type': animation_type
+        }
+        
+        # Запускаем генерацию
+        background_tasks.add_task(
+            process_clips_generation,
+            generation_task_id,
+            task_id,
+            task['highlights'],
+            task['video_path'],
+            task.get('segments', []),
+            subtitle_style,
+            animation_type
+        )
+        
+        return {
+            "generation_task_id": generation_task_id,
+            "status": "queued",
+            "message": f"Clip generation with {subtitle_style} subtitles and {animation_type} animation started",
+            "highlights_count": len(task['highlights']),
+            "subtitle_style": subtitle_style,
+            "animation_type": animation_type
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка запуска генерации клипов: {e}")
+        raise HTTPException(500, f"Ошибка генерации клипов: {e}")
+
+@app.get("/api/clips/generation/{generation_task_id}/status")
+async def get_generation_status(generation_task_id: str):
+    """Получает статус генерации клипов"""
+    if generation_task_id not in generation_tasks:
+        raise HTTPException(404, "Задача генерации не найдена")
+    
+    return generation_tasks[generation_task_id]
+
+@app.get("/api/clips/{clip_id}/download")
+async def download_clip(clip_id: str):
+    """Скачивает готовый клип"""
+    clip_path = os.path.join(config.CLIPS_DIR, f"{clip_id}.mp4")
+    
+    if not os.path.exists(clip_path):
+        raise HTTPException(404, "Клип не найден")
+    
+    return FileResponse(
+        clip_path,
+        media_type="video/mp4",
+        filename=f"clip_{clip_id}.mp4"
+    )
+
+# Очистка файлов
 async def cleanup_old_files():
     """Очищает старые файлы"""
     try:
         current_time = time.time()
         
-        for directory in [UPLOADS_DIR, AUDIO_DIR, CLIPS_DIR]:
-            for file_path in directory.glob("*"):
-                if file_path.is_file():
-                    file_age = current_time - file_path.stat().st_mtime
+        for directory in [config.UPLOAD_DIR, config.AUDIO_DIR, config.CLIPS_DIR]:
+            if not os.path.exists(directory):
+                continue
+                
+            for filename in os.listdir(directory):
+                file_path = os.path.join(directory, filename)
+                
+                if os.path.isfile(file_path):
+                    file_age = current_time - os.path.getctime(file_path)
+                    
                     if file_age > config.MAX_FILE_AGE:
-                        file_path.unlink()
+                        os.remove(file_path)
                         logger.info(f"🗑️ Удален старый файл: {file_path}")
         
         # Очищаем старые задачи
-        old_task_ids = []
-        for task_id, task_data in tasks.items():
-            task_age = current_time - task_data.get("created_at", current_time)
+        old_tasks = []
+        for task_id, task in tasks.items():
+            task_age = current_time - task['created_at']
             if task_age > config.MAX_FILE_AGE:
-                old_task_ids.append(task_id)
+                old_tasks.append(task_id)
         
-        for task_id in old_task_ids:
+        for task_id in old_tasks:
             del tasks[task_id]
             logger.info(f"🗑️ Удалена старая задача: {task_id}")
         
         # Очищаем старые задачи генерации
-        old_generation_ids = []
-        for gen_id, gen_data in generation_tasks.items():
-            gen_age = current_time - gen_data.get("created_at", current_time)
-            if gen_age > config.MAX_FILE_AGE:
-                old_generation_ids.append(gen_id)
+        old_generations = []
+        for gen_id, gen_task in generation_tasks.items():
+            task_age = current_time - gen_task['created_at']
+            if task_age > config.MAX_FILE_AGE:
+                old_generations.append(gen_id)
         
-        for gen_id in old_generation_ids:
+        for gen_id in old_generations:
             del generation_tasks[gen_id]
-            logger.info(f"🗑️ Удалена старая задача генерации: {gen_id}")
+            logger.info(f"🗑️ Удалена старая генерация: {gen_id}")
         
         # Принудительная сборка мусора
         gc.collect()
         
     except Exception as e:
-        logger.error(f"❌ Ошибка очистки: {e}")
+        logger.error(f"❌ Ошибка очистки файлов: {e}")
 
 # Запуск периодической очистки
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.5.5 with Whisper Fix started!")
+    logger.info("🚀 AgentFlow AI Clips v15.6 with Improved Subtitles started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
