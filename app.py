@@ -222,20 +222,19 @@ class AdvancedAnimatedSubtitleSystem:
     
     def get_crop_filter_9_16(self, video_width=1920, video_height=1080):
         """Генерирует фильтр обрезки для формата 9:16"""
-        # Целевое соотношение 9:16 (0.5625)
-        target_ratio = 9.0 / 16.0
-        current_ratio = video_width / video_height
-        
-        if current_ratio > target_ratio:
-            # Видео слишком широкое, обрезаем по ширине
-            new_width = int(video_height * target_ratio)
-            crop_x = (video_width - new_width) // 2
-            return f"crop={new_width}:{video_height}:{crop_x}:0"
-        else:
-            # Видео слишком высокое, обрезаем по высоте  
-            new_height = int(video_width / target_ratio)
-            crop_y = (video_height - new_height) // 2
-            return f"crop={video_width}:{new_height}:0:{crop_y}"
+        # Адаптивное масштабирование + обрезка
+        return "scale='if(gte(iw/ih,9/16),1080,-1)':'if(gte(iw/ih,9/16),-1,1920)',crop=1080:1920:(iw-1080)/2:(ih-1920)/2"
+    
+    def get_crop_filter_1_1(self, video_width=1920, video_height=1080):
+        """Генерирует фильтр обрезки для формата 1:1 (квадрат)"""
+        # Адаптивное масштабирование + обрезка для квадрата
+        size = min(video_width, video_height)
+        return f"scale='if(gte(iw,ih),{size},-1)':'if(gte(iw,ih),-1,{size})',crop={size}:{size}:(iw-{size})/2:(ih-{size})/2"
+    
+    def get_crop_filter_4_5(self, video_width=1920, video_height=1080):
+        """Генерирует фильтр обрезки для формата 4:5 (Instagram Stories)"""
+        # Адаптивное масштабирование + обрезка для 4:5
+        return "scale='if(gte(iw/ih,4/5),864,-1)':'if(gte(iw/ih,4/5),-1,1080)',crop=864:1080:(iw-864)/2:(ih-1080)/2"
     
     def generate_ffmpeg_filter_advanced(self, segments, start_time, end_time, style='modern'):
         """Генерирует продвинутый FFmpeg фильтр с правильной синхронизацией"""
@@ -612,7 +611,7 @@ def analyze_transcript_with_chatgpt(transcript_text, segments):
             "viral_score": 65
         }]
 
-def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight"):
+def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight", format_id="9:16"):
     """Генерирует клип с продвинутыми анимированными субтитрами"""
     try:
         logger.info(f"🎬 Генерируем клип: {start_time:.1f}-{end_time:.1f}s")
@@ -634,12 +633,25 @@ def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, outp
         
         logger.info(f"📝 Фильтр субтитров: {len(subtitle_filter)} символов")
         
-        # Генерируем фильтр обрезки для 9:16
-        crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
-        logger.info(f"✂️ Обрезка для 9:16: {crop_filter}")
+        # Генерируем фильтр обрезки в зависимости от формата
+        if format_id == "9:16":
+            crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
+        elif format_id == "16:9":
+            crop_filter = ""  # Оригинальный формат
+        elif format_id == "1:1":
+            crop_filter = subtitle_system.get_crop_filter_1_1(video_info['width'], video_info['height'])
+        elif format_id == "4:5":
+            crop_filter = subtitle_system.get_crop_filter_4_5(video_info['width'], video_info['height'])
+        else:
+            crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
+        
+        logger.info(f"✂️ Обрезка для {format_id}: {crop_filter}")
         
         # Комбинируем фильтры
-        video_filter = f"{crop_filter},{subtitle_filter}"
+        if crop_filter:
+            video_filter = f"{crop_filter},{subtitle_filter}"
+        else:
+            video_filter = subtitle_filter
         
         # FFmpeg команда
         cmd = [
