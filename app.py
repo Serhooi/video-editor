@@ -463,9 +463,9 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
             if hasattr(response, 'segments') and response.segments:
                 for segment in response.segments:
                     segments.append({
-                        "start": segment.start,
-                        "end": segment.end, 
-                        "text": segment.text
+                        "start": segment["start"] if isinstance(segment, dict) else segment.start,
+                        "end": segment["end"] if isinstance(segment, dict) else segment.end, 
+                        "text": segment["text"] if isinstance(segment, dict) else segment.text
                     })
             
             return {
