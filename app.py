@@ -1,13 +1,13 @@
 """
-AgentFlow AI Clips v15.3 - WHISPER FIX FOR LONG VIDEOS
-Полная версия с исправленной транскрибацией для видео 5-20 минут
+AgentFlow AI Clips v15.3.1 - DIAGNOSTIC VERSION
+Полная версия с детальной диагностикой OpenAI API для выявления проблем с Whisper
 
-ИСПРАВЛЕНИЯ:
-1. Увеличенные timeout для длинных видео
-2. Chunking для очень больших аудио файлов
-3. Улучшенное извлечение аудио
-4. Детальный прогресс индикатор
-5. Graceful error handling
+ДИАГНОСТИЧЕСКИЕ ВОЗМОЖНОСТИ:
+1. Детальное логирование инициализации OpenAI
+2. Проверка доступности модели whisper-1
+3. Анализ типа API ключа (Project vs Legacy)
+4. Подробные ошибки от Whisper API
+5. Мониторинг всех этапов транскрибации
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
@@ -30,13 +30,14 @@ from collections import deque
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import gc
+import traceback
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.3")
+app = FastAPI(title="AgentFlow AI Clips", version="15.3.1-diagnostic")
 
 # CORS
 app.add_middleware(
@@ -76,19 +77,46 @@ class Config:
 
 config = Config()
 
-# OpenAI клиент - ОБНОВЛЕННЫЙ С УВЕЛИЧЕННЫМ TIMEOUT
+# OpenAI клиент - ДИАГНОСТИЧЕСКАЯ ВЕРСИЯ
 client = None
 try:
     from openai import OpenAI
     api_key = os.getenv("OPENAI_API_KEY")
+    
+    logger.info(f"🔍 ДИАГНОСТИКА: Инициализация OpenAI клиента...")
+    
     if api_key:
+        logger.info(f"🔑 ДИАГНОСТИКА: API ключ найден")
+        logger.info(f"🔑 ДИАГНОСТИКА: Длина ключа: {len(api_key)} символов")
+        logger.info(f"🔑 ДИАГНОСТИКА: Начинается с: {api_key[:15]}...")
+        logger.info(f"🔑 ДИАГНОСТИКА: Тип: {'Project key' if api_key.startswith('sk-proj-') else 'Legacy key'}")
+        
         # УВЕЛИЧЕННЫЙ TIMEOUT ДЛЯ WHISPER
         client = OpenAI(api_key=api_key, timeout=config.WHISPER_TIMEOUT)
-        logger.info("✅ OpenAI client initialized with extended timeout")
+        logger.info("✅ ДИАГНОСТИКА: OpenAI client инициализирован с расширенным timeout")
+        
+        # ТЕСТОВЫЙ ЗАПРОС ДЛЯ ПРОВЕРКИ ДОСТУПНОСТИ
+        try:
+            logger.info("🧪 ДИАГНОСТИКА: Тестируем доступность API...")
+            test_response = client.models.list()
+            available_models = [model.id for model in test_response.data]
+            logger.info(f"📋 ДИАГНОСТИКА: Доступно моделей: {len(available_models)}")
+            
+            if "whisper-1" in available_models:
+                logger.info("✅ ДИАГНОСТИКА: Модель whisper-1 ДОСТУПНА!")
+            else:
+                logger.error("❌ ДИАГНОСТИКА: Модель whisper-1 НЕ ДОСТУПНА на вашем Tier!")
+                logger.info(f"📋 ДИАГНОСТИКА: Доступные модели: {', '.join(available_models[:10])}...")
+            
+        except Exception as test_error:
+            logger.error(f"❌ ДИАГНОСТИКА: Ошибка тестового запроса: {test_error}")
+        
     else:
-        logger.warning("⚠️ OpenAI API key not found")
+        logger.error("❌ ДИАГНОСТИКА: OpenAI API ключ не найден в переменных окружения")
+        
 except Exception as e:
-    logger.error(f"❌ OpenAI client initialization failed: {e}")
+    logger.error(f"❌ ДИАГНОСТИКА: Ошибка инициализации OpenAI клиента: {e}")
+    logger.error(f"❌ ДИАГНОСТИКА: Traceback: {traceback.format_exc()}")
 
 # Директории
 UPLOAD_DIR = Path("uploads")
@@ -223,6 +251,8 @@ def check_dependencies():
 def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
     """Извлечение аудио из видео с улучшенными параметрами"""
     try:
+        logger.info(f"🎵 ДИАГНОСТИКА: Извлекаем аудио из {video_path}")
+        
         # Улучшенная команда FFmpeg для лучшего качества аудио
         cmd = [
             'ffmpeg', '-i', video_path,
@@ -238,20 +268,22 @@ def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
         if result.returncode == 0:
             # Проверяем размер созданного файла
             audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
-            logger.info(f"🎵 Audio extracted: {audio_size:.1f}MB")
+            logger.info(f"🎵 ДИАГНОСТИКА: Audio extracted: {audio_size:.1f}MB")
             return True
         else:
-            logger.error(f"FFmpeg error: {result.stderr}")
+            logger.error(f"❌ ДИАГНОСТИКА: FFmpeg error: {result.stderr}")
             return False
             
     except Exception as e:
-        logger.error(f"Audio extraction failed: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Audio extraction failed: {e}")
         return False
 
 # НОВАЯ ФУНКЦИЯ CHUNKING ДЛЯ ДЛИННЫХ АУДИО
 def split_audio_into_chunks(audio_path: str, chunk_duration: int = 600) -> List[str]:
     """Разбивает длинное аудио на chunks по 10 минут"""
     try:
+        logger.info(f"📦 ДИАГНОСТИКА: Разбиваем аудио на chunks: {audio_path}")
+        
         chunks = []
         audio_dir = os.path.dirname(audio_path)
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
@@ -266,13 +298,17 @@ def split_audio_into_chunks(audio_path: str, chunk_duration: int = 600) -> List[
         if result.returncode == 0:
             data = json.loads(result.stdout)
             duration = float(data['format']['duration'])
+            logger.info(f"📦 ДИАГНОСТИКА: Длительность аудио: {duration:.1f} секунд")
             
             # Если аудио короче chunk_duration, возвращаем оригинал
             if duration <= chunk_duration:
+                logger.info(f"📦 ДИАГНОСТИКА: Аудио короткое, chunking не нужен")
                 return [audio_path]
             
             # Разбиваем на chunks
             chunk_count = int(duration / chunk_duration) + 1
+            logger.info(f"📦 ДИАГНОСТИКА: Создаем {chunk_count} chunks")
+            
             for i in range(chunk_count):
                 start_time = i * chunk_duration
                 chunk_path = os.path.join(audio_dir, f"{base_name}_chunk_{i}.wav")
@@ -288,34 +324,90 @@ def split_audio_into_chunks(audio_path: str, chunk_duration: int = 600) -> List[
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                 if result.returncode == 0:
                     chunks.append(chunk_path)
-                    logger.info(f"📦 Created chunk {i+1}/{chunk_count}: {chunk_path}")
+                    logger.info(f"📦 ДИАГНОСТИКА: Created chunk {i+1}/{chunk_count}: {chunk_path}")
                 else:
-                    logger.error(f"Failed to create chunk {i}: {result.stderr}")
+                    logger.error(f"❌ ДИАГНОСТИКА: Failed to create chunk {i}: {result.stderr}")
             
             return chunks
         
         return [audio_path]  # Fallback
         
     except Exception as e:
-        logger.error(f"Audio chunking failed: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Audio chunking failed: {e}")
         return [audio_path]
 
-# ФУНКЦИЯ ТРАНСКРИБАЦИИ ОДНОГО ФАЙЛА
+# ФУНКЦИЯ ТРАНСКРИБАЦИИ ОДНОГО ФАЙЛА - ДИАГНОСТИЧЕСКАЯ ВЕРСИЯ
 def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional[dict]:
-    """Транскрибация одного аудио файла"""
+    """Транскрибация одного аудио файла с детальной диагностикой"""
     try:
+        logger.info(f"🔍 ДИАГНОСТИКА: Начинаем транскрибацию файла {audio_path}")
+        
+        # Проверяем клиент
+        if not client:
+            logger.error("❌ ДИАГНОСТИКА: OpenAI client не инициализирован")
+            return None
+        
+        logger.info(f"✅ ДИАГНОСТИКА: OpenAI client инициализирован")
+        
+        # Проверяем файл
+        if not os.path.exists(audio_path):
+            logger.error(f"❌ ДИАГНОСТИКА: Аудио файл не найден: {audio_path}")
+            return None
+        
+        file_size = os.path.getsize(audio_path)
+        logger.info(f"📁 ДИАГНОСТИКА: Размер аудио файла: {file_size} байт ({file_size/1024/1024:.2f} MB)")
+        
+        # Проверяем API ключ
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            logger.info(f"🔑 ДИАГНОСТИКА: API ключ найден, начинается с: {api_key[:15]}...")
+            logger.info(f"🔑 ДИАГНОСТИКА: Тип ключа: {'Project key' if api_key.startswith('sk-proj-') else 'Legacy key'}")
+        else:
+            logger.error("❌ ДИАГНОСТИКА: API ключ не найден в переменных окружения")
+            return None
+        
         with open(audio_path, 'rb') as audio_file:
-            logger.info(f"🎤 Starting Whisper transcription...")
+            logger.info(f"🎤 ДИАГНОСТИКА: Отправляем запрос к Whisper API...")
+            logger.info(f"🎤 ДИАГНОСТИКА: Модель: whisper-1")
+            logger.info(f"🎤 ДИАГНОСТИКА: Формат ответа: verbose_json")
+            logger.info(f"🎤 ДИАГНОСТИКА: Язык: en")
             
-            # Whisper API вызов с увеличенным timeout
-            response = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                language="en"  # Указываем язык для ускорения
-            )
-            
-            logger.info(f"✅ Whisper transcription completed")
+            try:
+                # Whisper API вызов с детальным логированием
+                response = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json",
+                    language="en"
+                )
+                
+                logger.info(f"✅ ДИАГНОСТИКА: Whisper API ответил успешно!")
+                logger.info(f"📝 ДИАГНОСТИКА: Длина транскрипта: {len(response.text)} символов")
+                
+                if hasattr(response, 'segments'):
+                    logger.info(f"📊 ДИАГНОСТИКА: Количество сегментов: {len(response.segments) if response.segments else 0}")
+                else:
+                    logger.info(f"⚠️ ДИАГНОСТИКА: Сегменты отсутствуют в ответе")
+                
+            except Exception as api_error:
+                logger.error(f"❌ ДИАГНОСТИКА: Ошибка Whisper API: {type(api_error).__name__}")
+                logger.error(f"❌ ДИАГНОСТИКА: Сообщение ошибки: {str(api_error)}")
+                
+                # Детальный анализ ошибки
+                if hasattr(api_error, 'response'):
+                    logger.error(f"❌ ДИАГНОСТИКА: HTTP статус: {api_error.response.status_code}")
+                    logger.error(f"❌ ДИАГНОСТИКА: Ответ сервера: {api_error.response.text}")
+                
+                if "model" in str(api_error).lower():
+                    logger.error(f"🚨 ДИАГНОСТИКА: Возможно модель whisper-1 недоступна на вашем Tier!")
+                
+                if "quota" in str(api_error).lower() or "limit" in str(api_error).lower():
+                    logger.error(f"🚨 ДИАГНОСТИКА: Превышен лимит или квота API!")
+                
+                if "authentication" in str(api_error).lower() or "unauthorized" in str(api_error).lower():
+                    logger.error(f"🚨 ДИАГНОСТИКА: Проблема с аутентификацией API ключа!")
+                
+                return None
         
         # Обрабатываем сегменты с учетом time_offset
         segments = []
@@ -328,8 +420,10 @@ def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional
                 }
                 for seg in response.segments
             ]
+            logger.info(f"✅ ДИАГНОСТИКА: Обработано {len(segments)} сегментов")
         else:
             # Fallback: создаем простые сегменты
+            logger.info(f"⚠️ ДИАГНОСТИКА: Используем fallback сегментацию")
             text = response.text
             words = text.split()
             segment_length = 5.0
@@ -346,23 +440,30 @@ def transcribe_single_audio(audio_path: str, time_offset: float = 0) -> Optional
                     "end": end_time,
                     "text": " ".join(segment_words)
                 })
+            
+            logger.info(f"✅ ДИАГНОСТИКА: Создано {len(segments)} fallback сегментов")
         
-        return {
+        result = {
             "full_text": response.text,
             "segments": segments,
             "words": [],
             "language": "english"
         }
         
+        logger.info(f"🎉 ДИАГНОСТИКА: Транскрибация завершена успешно!")
+        return result
+        
     except Exception as e:
-        logger.error(f"Single audio transcription failed: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Общая ошибка транскрибации: {type(e).__name__}")
+        logger.error(f"❌ ДИАГНОСТИКА: Детали ошибки: {str(e)}")
+        logger.error(f"❌ ДИАГНОСТИКА: Traceback: {traceback.format_exc()}")
         return None
 
 # УЛУЧШЕННАЯ ФУНКЦИЯ ТРАНСКРИБАЦИИ С CHUNKING
 def transcribe_audio(audio_path: str, task_id: str = None) -> Optional[dict]:
     """Транскрибация аудио через OpenAI Whisper с поддержкой chunking"""
     if not client:
-        logger.error("OpenAI client not available")
+        logger.error("❌ ДИАГНОСТИКА: OpenAI client not available")
         return None
     
     try:
@@ -372,11 +473,11 @@ def transcribe_audio(audio_path: str, task_id: str = None) -> Optional[dict]:
         
         # Проверяем размер аудио файла
         audio_size = os.path.getsize(audio_path) / (1024 * 1024)  # MB
-        logger.info(f"🎵 Audio file size: {audio_size:.1f}MB")
+        logger.info(f"🎵 ДИАГНОСТИКА: Audio file size: {audio_size:.1f}MB")
         
         # Если файл слишком большой, разбиваем на chunks
         if audio_size > config.MAX_AUDIO_SIZE_MB:
-            logger.info(f"📦 Large audio file, splitting into chunks...")
+            logger.info(f"📦 ДИАГНОСТИКА: Large audio file, splitting into chunks...")
             if task_id and task_id in completed_tasks:
                 completed_tasks[task_id]['status'] = 'processing: Разбивка на части'
             
@@ -390,7 +491,7 @@ def transcribe_audio(audio_path: str, task_id: str = None) -> Optional[dict]:
                 if task_id and task_id in completed_tasks:
                     completed_tasks[task_id]['status'] = f'processing: Транскрибация части {i+1}/{len(chunks)}'
                 
-                logger.info(f"🎤 Transcribing chunk {i+1}/{len(chunks)}: {chunk_path}")
+                logger.info(f"🎤 ДИАГНОСТИКА: Transcribing chunk {i+1}/{len(chunks)}: {chunk_path}")
                 
                 chunk_result = transcribe_single_audio(chunk_path, i * config.CHUNK_DURATION)
                 if chunk_result:
@@ -419,16 +520,18 @@ def transcribe_audio(audio_path: str, task_id: str = None) -> Optional[dict]:
             return transcribe_single_audio(audio_path, 0)
         
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Transcription failed: {e}")
         return None
 
 def analyze_best_moments(transcript: dict) -> List[dict]:
     """Анализ лучших моментов через ChatGPT"""
     if not client:
-        logger.error("OpenAI client not available")
+        logger.error("❌ ДИАГНОСТИКА: OpenAI client not available")
         return []
     
     try:
+        logger.info(f"🧠 ДИАГНОСТИКА: Анализируем лучшие моменты через ChatGPT...")
+        
         # Используем GPT-3.5-turbo для скорости
         prompt = f"""
         Analyze this video transcript and find the 2-3 BEST viral moments for social media clips.
@@ -470,19 +573,22 @@ def analyze_best_moments(transcript: dict) -> List[dict]:
         )
         
         content = response.choices[0].message.content
+        logger.info(f"🧠 ДИАГНОСТИКА: ChatGPT анализ завершен, длина ответа: {len(content)} символов")
         
         # Извлекаем JSON из ответа
         import re
         json_match = re.search(r'\[.*\]', content, re.DOTALL)
         if json_match:
             moments = json.loads(json_match.group())
+            logger.info(f"🧠 ДИАГНОСТИКА: Найдено {len(moments)} лучших моментов")
             # Ограничиваем до 3 моментов для производительности
             return moments[:3]
         
+        logger.warning(f"⚠️ ДИАГНОСТИКА: Не удалось извлечь JSON из ответа ChatGPT")
         return []
         
     except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Analysis failed: {e}")
         return []
 
 def get_video_duration(video_path: str) -> float:
@@ -496,10 +602,13 @@ def get_video_duration(video_path: str) -> float:
         
         if result.returncode == 0:
             data = json.loads(result.stdout)
-            return float(data['format']['duration'])
+            duration = float(data['format']['duration'])
+            logger.info(f"📹 ДИАГНОСТИКА: Длительность видео: {duration:.1f} секунд")
+            return duration
         
         return 0.0
-    except:
+    except Exception as e:
+        logger.error(f"❌ ДИАГНОСТИКА: Ошибка получения длительности видео: {e}")
         return 0.0
 
 # ОБНОВЛЕННАЯ ФУНКЦИЯ АНАЛИЗА ВИДЕО
@@ -508,7 +617,7 @@ def analyze_video_task(task_id: str, file_path: str):
     try:
         # Обновляем статус
         completed_tasks[task_id]['status'] = 'processing: Извлечение аудио'
-        logger.info(f"🎬 Starting video analysis for {task_id}")
+        logger.info(f"🎬 ДИАГНОСТИКА: Starting video analysis for {task_id}")
         
         # Извлекаем аудио
         audio_path = AUDIO_DIR / f"{task_id}.wav"
@@ -545,10 +654,11 @@ def analyze_video_task(task_id: str, file_path: str):
         except:
             pass
         
-        logger.info(f"✅ Analysis completed for {task_id}")
+        logger.info(f"✅ ДИАГНОСТИКА: Analysis completed for {task_id}")
         
     except Exception as e:
-        logger.error(f"Analysis failed for task {task_id}: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Analysis failed for task {task_id}: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Traceback: {traceback.format_exc()}")
         completed_tasks[task_id].update({
             'status': 'failed',
             'error': str(e)
@@ -560,7 +670,7 @@ def analyze_video_task(task_id: str, file_path: str):
 async def root():
     return {
         "service": "AgentFlow AI Clips",
-        "version": "15.3",
+        "version": "15.3.1-diagnostic",
         "status": "running",
         "features": [
             "Video analysis with Whisper AI",
@@ -570,7 +680,8 @@ async def root():
             "Queue system for scalability",
             "Resource monitoring",
             "Support for long videos (up to 20 min)",
-            "Audio chunking for large files"
+            "Audio chunking for large files",
+            "DIAGNOSTIC MODE - detailed logging"
         ]
     }
 
@@ -593,7 +704,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "version": "15.3",
+        "version": "15.3.1-diagnostic",
         "dependencies": deps,
         "system": system_stats,
         "queue": queue_stats
@@ -603,6 +714,8 @@ async def health_check():
 async def analyze_video(file: UploadFile = File(...)):
     """Анализ видео с очередью"""
     try:
+        logger.info(f"📤 ДИАГНОСТИКА: Получен запрос на анализ видео: {file.filename}")
+        
         # Проверка перегрузки системы
         if monitor.is_system_overloaded():
             raise HTTPException(status_code=503, detail="System overloaded")
@@ -611,6 +724,8 @@ async def analyze_video(file: UploadFile = File(...)):
         file_size = 0
         content = await file.read()
         file_size = len(content)
+        
+        logger.info(f"📁 ДИАГНОСТИКА: Размер загруженного файла: {file_size} байт ({file_size/1024/1024:.2f} MB)")
         
         if file_size > config.MAX_VIDEO_SIZE_MB * 1024 * 1024:
             raise HTTPException(
@@ -621,6 +736,8 @@ async def analyze_video(file: UploadFile = File(...)):
         # Создание задачи
         task_id = str(uuid.uuid4())
         file_path = UPLOAD_DIR / f"{task_id}_{file.filename}"
+        
+        logger.info(f"💾 ДИАГНОСТИКА: Сохраняем файл как: {file_path}")
         
         # Сохранение файла
         with open(file_path, 'wb') as f:
@@ -663,12 +780,15 @@ async def analyze_video(file: UploadFile = File(...)):
             response["status"] = "processing"
             response["message"] = "Analysis started immediately"
         
+        logger.info(f"🚀 ДИАГНОСТИКА: Задача {task_id} добавлена в очередь, позиция: {queue_position}")
+        
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in analyze_video: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error in analyze_video: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/videos/{task_id}/status")
@@ -689,6 +809,8 @@ async def generate_clips(
 ):
     """Генерация клипов с субтитрами"""
     try:
+        logger.info(f"🎬 ДИАГНОСТИКА: Запрос на генерацию клипов для задачи {task_id}")
+        
         # Проверяем что задача существует в completed_tasks
         if task_id not in completed_tasks:
             raise HTTPException(status_code=404, detail="Task not found or not completed")
@@ -716,6 +838,8 @@ async def generate_clips(
         # Добавляем в очередь
         add_to_queue(f"generate_clips_{generation_id}", generation_clips_task, generation_id, task_data)
         
+        logger.info(f"🎬 ДИАГНОСТИКА: Генерация клипов {generation_id} добавлена в очередь")
+        
         return {
             "generation_id": generation_id,
             "status": "queued",
@@ -723,7 +847,7 @@ async def generate_clips(
         }
         
     except Exception as e:
-        logger.error(f"Error starting clips generation: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error starting clips generation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/clips/generation/{generation_id}/status")
@@ -738,7 +862,7 @@ async def get_generation_status(generation_id: str):
         return generation_data
         
     except Exception as e:
-        logger.error(f"Error getting generation status: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error getting generation status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/clips/{clip_id}/download")
@@ -756,12 +880,14 @@ async def download_clip(clip_id: str):
         )
         
     except Exception as e:
-        logger.error(f"Error downloading clip: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error downloading clip: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def generation_clips_task(generation_id: str, task_data: dict):
     """Фоновая задача генерации клипов"""
     try:
+        logger.info(f"🎬 ДИАГНОСТИКА: Начинаем генерацию клипов для {generation_id}")
+        
         # Обновляем статус в completed_tasks
         generation_key = f"gen_{generation_id}"
         generation_data = completed_tasks[generation_key]
@@ -771,6 +897,8 @@ def generation_clips_task(generation_id: str, task_data: dict):
         clips = []
         for i, moment in enumerate(task_data['best_moments']):
             clip_id = str(uuid.uuid4())
+            
+            logger.info(f"🎬 ДИАГНОСТИКА: Генерируем клип {i+1}: {moment['title']}")
             
             # Простая нарезка без субтитров (для скорости)
             input_file = task_data['file_path']
@@ -797,19 +925,20 @@ def generation_clips_task(generation_id: str, task_data: dict):
                     "viral_score": moment['viral_score'],
                     "download_url": f"/api/clips/{clip_id}/download"
                 })
-                logger.info(f"✅ Generated clip {clip_id}: {moment['title']}")
+                logger.info(f"✅ ДИАГНОСТИКА: Generated clip {clip_id}: {moment['title']}")
             else:
-                logger.error(f"❌ Failed to generate clip for moment {i}: {result.stderr}")
+                logger.error(f"❌ ДИАГНОСТИКА: Failed to generate clip for moment {i}: {result.stderr}")
         
         # Обновляем результат
         generation_data['status'] = 'completed'
         generation_data['clips'] = clips
         generation_data['completed_at'] = datetime.now().isoformat()
         
-        logger.info(f"🎬 Generated {len(clips)} clips for {generation_id}")
+        logger.info(f"🎬 ДИАГНОСТИКА: Generated {len(clips)} clips for {generation_id}")
         
     except Exception as e:
-        logger.error(f"Error in generation task: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error in generation task: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Traceback: {traceback.format_exc()}")
         generation_data['status'] = 'failed'
         generation_data['error'] = str(e)
         generation_data['failed_at'] = datetime.now().isoformat()
@@ -833,7 +962,7 @@ async def get_task_clips(task_id: str):
         }
         
     except Exception as e:
-        logger.error(f"Error getting task clips: {e}")
+        logger.error(f"❌ ДИАГНОСТИКА: Error getting task clips: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
