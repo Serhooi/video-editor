@@ -50,7 +50,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.8-smart-subtitles")
+app = FastAPI(title="AgentFlow AI Clips", version="15.8.1-method-fix")
 
 # CORS
 app.add_middleware(
@@ -368,6 +368,10 @@ class SmartSubtitleSystem:
         # Убираем лишние пробелы
         text = ' '.join(text.split())
         return text
+    
+    def get_crop_filter_9_16(self):
+        """Возвращает фильтр обрезки для формата 9:16"""
+        return "crop=1080:1920:(iw-1080)/2:(ih-1920)/2"
     
 # Глобальные переменные
 tasks = {}
@@ -901,7 +905,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.8-smart-subtitles",
+            "version": "15.8.1-method-fix",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1101,7 +1105,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.8 with Smart Subtitles started!")
+    logger.info("🚀 AgentFlow AI Clips v15.8.1 with Method Fix started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
