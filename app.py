@@ -451,8 +451,7 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
                     client.audio.transcriptions.create,
                     model="whisper-1",
                     file=audio_file,
-                    response_format="verbose_json",
-                    timestamp_granularities=["segment"]
+                    response_format="verbose_json"
                 ),
                 timeout=config.WHISPER_TIMEOUT
             )
