@@ -650,13 +650,25 @@ async def analyze_transcript_with_chatgpt(transcript: str) -> List[Dict]:
         
         content = response.choices[0].message.content
         logger.info("✅ Анализ ChatGPT завершен")
+        logger.info(f"🔍 Ответ ChatGPT: {content[:500]}...")  # Логируем первые 500 символов
         
         # Парсим JSON ответ
         try:
-            result = json.loads(content)
-            return result.get("highlights", [])
-        except json.JSONDecodeError:
-            logger.error("❌ Ошибка парсинга JSON ответа от ChatGPT")
+            # Пытаемся найти JSON в ответе
+            import re
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                result = json.loads(json_str)
+                highlights = result.get("highlights", [])
+                logger.info(f"✅ Найдено {len(highlights)} highlights")
+                return highlights
+            else:
+                logger.error("❌ JSON не найден в ответе ChatGPT")
+                return []
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Ошибка парсинга JSON ответа от ChatGPT: {e}")
+            logger.error(f"🔍 Проблемный контент: {content}")
             return []
             
     except asyncio.TimeoutError:
