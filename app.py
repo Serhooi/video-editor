@@ -906,7 +906,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.7.1-segments-fix",
+            "version": "17.6.0-download-fix-complete",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1182,17 +1182,81 @@ async def get_generation_status(generation_task_id: str):
 
 @app.get("/api/clips/{clip_id}/download")
 async def download_clip(clip_id: str):
-    """Скачивает готовый клип"""
-    clip_path = os.path.join(Config.CLIPS_DIR, f"{clip_id}.mp4")
-    
-    if not os.path.exists(clip_path):
-        raise HTTPException(status_code=404, detail="Клип не найден")
-    
-    return FileResponse(
-        clip_path,
-        media_type="video/mp4",
-        filename=f"clip_{clip_id}.mp4"
-    )
+    """Скачивает готовый клип (legacy endpoint)"""
+    try:
+        # Ищем файл в папке clips
+        clip_files = []
+        for filename in os.listdir(Config.CLIPS_DIR):
+            if filename.startswith(clip_id) and filename.endswith(".mp4"):
+                clip_files.append(filename)
+        
+        if not clip_files:
+            raise HTTPException(status_code=404, detail="Клип не найден")
+        
+        # Берем первый найденный файл
+        clip_filename = clip_files[0]
+        clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
+        
+        logger.info(f"📥 Скачивание клипа: {clip_filename}")
+        
+        return FileResponse(
+            clip_path,
+            media_type="video/mp4",
+            filename=clip_filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка скачивания клипа: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/clips/generation/{generation_task_id}/download/{clip_id}")
+async def download_clip_from_generation(generation_task_id: str, clip_id: str):
+    """Скачивает клип из задачи генерации"""
+    try:
+        # Проверяем что задача существует
+        if generation_task_id not in generation_tasks:
+            raise HTTPException(status_code=404, detail="Задача генерации не найдена")
+        
+        generation_task = generation_tasks[generation_task_id]
+        
+        # Проверяем что генерация завершена
+        if generation_task["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Генерация не завершена")
+        
+        # Ищем клип
+        clip_info = None
+        for clip in generation_task.get("clips", []):
+            if clip["id"] == clip_id:
+                clip_info = clip
+                break
+        
+        if not clip_info:
+            raise HTTPException(status_code=404, detail="Клип не найден")
+        
+        # Получаем путь к файлу
+        clip_filename = clip_info["filename"]
+        clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
+        
+        # Проверяем что файл существует
+        if not os.path.exists(clip_path):
+            logger.error(f"❌ Файл не найден: {clip_path}")
+            raise HTTPException(status_code=404, detail="Файл клипа не найден")
+        
+        logger.info(f"📥 Скачивание клипа: {clip_filename}")
+        
+        return FileResponse(
+            clip_path,
+            media_type="video/mp4",
+            filename=clip_filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка скачивания клипа: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Очистка старых файлов
 async def cleanup_old_files():
@@ -1245,7 +1309,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.7.1 with Segments Fix started!")
+    logger.info("🚀 AgentFlow AI Clips v17.6 with Download Fix - ПОЛНАЯ ВЕРСИЯ started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
