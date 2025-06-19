@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.6-improved-subtitles")
+app = FastAPI(title="AgentFlow AI Clips", version="15.6.1-embedded-subtitles")
 
 # CORS
 app.add_middleware(
@@ -55,8 +55,132 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Импорт улучшенной системы субтитров
-from improved_animated_subtitle_system import ImprovedAnimatedSubtitleSystem
+# Импорт улучшенной системы субтитров - ВСТРОЕНО В ФАЙЛ
+# from improved_animated_subtitle_system import ImprovedAnimatedSubtitleSystem
+
+# Встроенная система анимированных субтитров
+class ImprovedAnimatedSubtitleSystem:
+    def __init__(self):
+        self.styles = {
+            'modern': {
+                'font': 'Montserrat-Bold',
+                'base_color': 'white',
+                'highlight_color': '#00FF00',  # Зеленый как в примере
+                'font_size': 48,
+                'stroke_width': 2,
+                'stroke_color': 'black'
+            },
+            'neon': {
+                'font': 'Montserrat-Bold', 
+                'base_color': 'white',
+                'highlight_color': '#00FFFF',  # Неоновый голубой
+                'font_size': 48,
+                'stroke_width': 2,
+                'stroke_color': 'black'
+            },
+            'fire': {
+                'font': 'Montserrat-Bold',
+                'base_color': 'white', 
+                'highlight_color': '#FF4500',  # Оранжевый
+                'font_size': 48,
+                'stroke_width': 2,
+                'stroke_color': 'black'
+            }
+        }
+    
+    def group_words_into_phrases(self, text, max_words_per_phrase=4):
+        """Группирует слова в фразы по 2-4 слова"""
+        words = text.split()
+        phrases = []
+        current_phrase = []
+        
+        for word in words:
+            current_phrase.append(word)
+            
+            # Группируем по 2-4 слова или по знакам препинания
+            if (len(current_phrase) >= max_words_per_phrase or 
+                word.endswith(('.', ',', '!', '?', ':'))):
+                phrases.append(' '.join(current_phrase))
+                current_phrase = []
+        
+        # Добавляем оставшиеся слова
+        if current_phrase:
+            phrases.append(' '.join(current_phrase))
+            
+        return phrases
+    
+    def calculate_word_timings(self, phrase, start_time, end_time):
+        """Рассчитывает тайминги для каждого слова в фразе"""
+        words = phrase.split()
+        duration = end_time - start_time
+        word_duration = duration / len(words)
+        
+        timings = []
+        for i, word in enumerate(words):
+            word_start = start_time + (i * word_duration)
+            word_end = word_start + word_duration
+            timings.append({
+                'word': word,
+                'start': word_start,
+                'end': word_end
+            })
+        
+        return timings
+    
+    def escape_for_ffmpeg(self, text):
+        """Экранирует текст для FFmpeg"""
+        # Убираем ASS теги для простого текста
+        import re
+        text = re.sub(r'\{[^}]*\}', '', text)
+        
+        # Экранируем специальные символы
+        text = text.replace("'", "\\'")
+        text = text.replace(":", "\\:")
+        text = text.replace(",", "\\,")
+        text = text.replace("[", "\\[")
+        text = text.replace("]", "\\]")
+        
+        return text
+    
+    def generate_ffmpeg_filter(self, segments, quote, start_time, end_time, style='modern'):
+        """Генерирует полный FFmpeg фильтр для анимированных субтитров"""
+        try:
+            # Группируем слова в фразы
+            phrases = self.group_words_into_phrases(quote, max_words_per_phrase=4)
+            
+            if not phrases:
+                return self.generate_fallback_filter(quote, style)
+            
+            # Рассчитываем время для каждой фразы
+            total_duration = end_time - start_time
+            phrase_duration = total_duration / len(phrases)
+            
+            all_filters = []
+            
+            for i, phrase in enumerate(phrases):
+                phrase_start = start_time + (i * phrase_duration)
+                phrase_end = phrase_start + phrase_duration
+                
+                # Простой фильтр для фразы (без сложной анимации пока)
+                escaped_phrase = self.escape_for_ffmpeg(phrase)
+                style_config = self.styles[style]
+                
+                phrase_filter = f"drawtext=text='{escaped_phrase}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={style_config['font_size']}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y=h-150:enable='between(t,{phrase_start},{phrase_end})'"
+                
+                all_filters.append(phrase_filter)
+            
+            return ','.join(all_filters)
+            
+        except Exception as e:
+            print(f"Ошибка генерации фильтра: {e}")
+            return self.generate_fallback_filter(quote, style)
+    
+    def generate_fallback_filter(self, quote, style='modern'):
+        """Fallback фильтр если основной не работает"""
+        style_config = self.styles[style]
+        escaped_quote = self.escape_for_ffmpeg(quote)
+        
+        return f"drawtext=text='{escaped_quote}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={style_config['font_size']}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y=h-150"
 
 # Глобальные переменные
 tasks = {}
@@ -721,7 +845,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.6-improved-subtitles",
+            "version": "15.6.1-embedded-subtitles",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -929,7 +1053,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.6 with Improved Subtitles started!")
+    logger.info("🚀 AgentFlow AI Clips v15.6.1 with Embedded Subtitles started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
