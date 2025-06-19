@@ -43,7 +43,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.5.4-ffmpeg-fix")
+app = FastAPI(title="AgentFlow AI Clips", version="15.5.5-whisper-fix")
 
 # CORS
 app.add_middleware(
@@ -429,12 +429,12 @@ async def transcribe_audio_with_whisper(audio_path: str) -> Optional[Dict]:
         logger.info("🔄 Отправляем запрос к Whisper API...")
         
         with open(audio_path, "rb") as audio_file:
-            # ИСПРАВЛЕНО: Используем правильный формат для timestamp_granularities
+            # ИСПРАВЛЕНО: Убираем timestamp_granularities (не поддерживается)
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"]  # Исправлено: список вместо строки
+                response_format="verbose_json"
+                # timestamp_granularities убран - не поддерживается в текущей версии API
             )
         
         logger.info("✅ Транскрибация завершена успешно")
@@ -520,8 +520,8 @@ async def transcribe_large_audio_chunked(audio_path: str) -> Optional[Dict]:
                     transcript = client.audio.transcriptions.create(
                         model="whisper-1",
                         file=chunk_file,
-                        response_format="verbose_json",
-                        timestamp_granularities=["segment"]
+                        response_format="verbose_json"
+                        # timestamp_granularities убран - не поддерживается
                     )
                 
                 # Добавляем к общему тексту
@@ -1156,7 +1156,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.5.4-ffmpeg-fix",
+            "version": "15.5.5-whisper-fix",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1222,7 +1222,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.5.4 with FFmpeg Fix started!")
+    logger.info("🚀 AgentFlow AI Clips v15.5.5 with Whisper Fix started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
