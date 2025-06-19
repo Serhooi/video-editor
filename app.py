@@ -579,64 +579,135 @@ def transcribe_large_audio_chunked(audio_path: str, chunk_duration: int = 600) -
         return None
 
 def analyze_video_with_chatgpt(transcript_text: str, duration: float) -> Optional[List[Dict]]:
-    """Анализ видео с помощью ChatGPT для поиска лучших моментов"""
+    """Исправленный анализ видео с ChatGPT - всегда возвращает JSON"""
     try:
-        logger.info("🤖 Анализируем видео с ChatGPT...")
+        logger.info("🤖 Анализируем видео с ChatGPT (исправленная версия)...")
         
         prompt = f"""
-Проанализируй этот текст из видео длительностью {duration:.1f} секунд и найди 3 самых интересных момента для создания коротких клипов (5-15 секунд каждый).
+Проанализируй этот текст из видео длительностью {duration:.1f} секунд и найди лучшие моменты для создания коротких клипов.
 
-Текст: {transcript_text}
+Текст: "{transcript_text}"
+
+ВАЖНО: Ответь ТОЛЬКО в формате JSON, без дополнительного текста. Даже если видео короткое или содержит мало информации, создай хотя бы 1-3 момента на основе имеющегося контента.
 
 Для каждого момента укажи:
-1. start_time - время начала в секундах
-2. end_time - время окончания в секундах  
-3. quote - точная цитата из текста
-4. reason - почему этот момент интересен
-5. viral_score - оценка вирусности от 1 до 100
+- start_time: время начала в секундах (число)
+- end_time: время окончания в секундах (число)
+- quote: точная цитата из текста
+- reason: почему этот момент интересен
+- viral_score: оценка вирусности от 1 до 100 (число)
 
-Ответь в формате JSON:
+Формат ответа (ТОЛЬКО JSON):
 {{
   "highlights": [
     {{
-      "start_time": 10.5,
-      "end_time": 18.2,
-      "quote": "точная цитата",
-      "reason": "объяснение",
-      "viral_score": 85
+      "start_time": 0.0,
+      "end_time": {min(duration, 10.0)},
+      "quote": "цитата из текста",
+      "reason": "объяснение интереса",
+      "viral_score": 75
     }}
   ]
 }}
+
+Если текст очень короткий, создай один момент с полным содержанием видео.
 """
 
         client = openai.OpenAI()
         response = client.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
+            messages=[
+                {"role": "system", "content": "Ты помощник для анализа видео. Отвечай ТОЛЬКО в формате JSON, без дополнительного текста или объяснений."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
         )
         
-        result_text = response.choices[0].message.content
+        result_text = response.choices[0].message.content.strip()
         logger.info(f"📝 Ответ ChatGPT: {result_text[:200]}...")
+        
+        # Очищаем ответ от возможного markdown
+        if result_text.startswith("```json"):
+            result_text = result_text.replace("```json", "").replace("```", "").strip()
+        elif result_text.startswith("```"):
+            result_text = result_text.replace("```", "").strip()
         
         # Парсим JSON ответ
         try:
             result = json.loads(result_text)
             highlights = result.get("highlights", [])
             
-            logger.info(f"✅ Найдено {len(highlights)} интересных моментов")
-            for i, highlight in enumerate(highlights, 1):
-                logger.info(f"🎯 Момент {i}: {highlight.get('start_time', 0):.1f}-{highlight.get('end_time', 0):.1f}s, Score: {highlight.get('viral_score', 0)}")
+            # Валидация и исправление данных
+            valid_highlights = []
+            for highlight in highlights:
+                try:
+                    start_time = float(highlight.get("start_time", 0))
+                    end_time = float(highlight.get("end_time", duration))
+                    
+                    # Исправляем некорректные тайминги
+                    if start_time < 0:
+                        start_time = 0
+                    if end_time > duration:
+                        end_time = duration
+                    if end_time <= start_time:
+                        end_time = min(start_time + 5.0, duration)
+                    
+                    valid_highlight = {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "quote": str(highlight.get("quote", transcript_text[:100])),
+                        "reason": str(highlight.get("reason", "Интересный момент")),
+                        "viral_score": int(highlight.get("viral_score", 75))
+                    }
+                    valid_highlights.append(valid_highlight)
+                    
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"⚠️ Пропускаем некорректный highlight: {e}")
+                    continue
             
-            return highlights
+            # Если нет валидных highlights, создаем один по умолчанию
+            if not valid_highlights:
+                logger.info("📝 Создаем highlight по умолчанию для короткого видео")
+                valid_highlights = [{
+                    "start_time": 0.0,
+                    "end_time": min(duration, 10.0),
+                    "quote": transcript_text[:100] if transcript_text else "Интересный контент",
+                    "reason": "Основной контент видео",
+                    "viral_score": 70
+                }]
+            
+            logger.info(f"✅ Найдено {len(valid_highlights)} интересных моментов")
+            for i, highlight in enumerate(valid_highlights, 1):
+                logger.info(f"🎯 Момент {i}: {highlight['start_time']:.1f}-{highlight['end_time']:.1f}s, Score: {highlight['viral_score']}")
+            
+            return valid_highlights
             
         except json.JSONDecodeError as e:
             logger.error(f"❌ Ошибка парсинга JSON: {e}")
-            return None
+            logger.error(f"📄 Проблемный ответ: {result_text}")
+            
+            # Fallback: создаем highlight по умолчанию
+            logger.info("🔄 Создаем fallback highlight")
+            return [{
+                "start_time": 0.0,
+                "end_time": min(duration, 10.0),
+                "quote": transcript_text[:100] if transcript_text else "Контент видео",
+                "reason": "Автоматически выбранный момент",
+                "viral_score": 65
+            }]
             
     except Exception as e:
         logger.error(f"❌ Ошибка анализа с ChatGPT: {e}")
-        return None
+        
+        # Fallback: создаем highlight по умолчанию
+        logger.info("🔄 Создаем emergency fallback highlight")
+        return [{
+            "start_time": 0.0,
+            "end_time": min(duration, 10.0),
+            "quote": transcript_text[:100] if transcript_text else "Видео контент",
+            "reason": "Резервный выбор при ошибке анализа",
+            "viral_score": 60
+        }]
 
 def generate_clip_with_opus_subtitles(video_path: str, start_time: float, end_time: float, 
                                     output_path: str, segments: List[Dict], 
