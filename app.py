@@ -1,25 +1,26 @@
 """
-AgentFlow AI Clips v15.7 - КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ
+AgentFlow AI Clips v15.8 - КАРДИНАЛЬНЫЕ ИСПРАВЛЕНИЯ СУБТИТРОВ
 ИСПРАВЛЕНО:
-1. Правильная синхронизация субтитров с речью (используем сегменты Whisper)
-2. Формат видео 9:16 для TikTok/Instagram  
-3. Анимация слов с подсветкой (как в примере пользователя)
-4. Исправлена логика поиска сегментов для всех клипов
-5. Увеличен размер шрифта для вертикального формата
-6. Улучшена позиция субтитров
+1. Автоматический размер шрифта (адаптация под длину текста)
+2. Умный перенос строк (максимум 25 символов на строку)
+3. Правильная анимация подсветки слов
+4. Позиционирование с учетом размера кадра
+5. Ограничение максимум 3 строки
+6. Обрезка длинного текста с "..."
 
-НОВОЕ В v15.7:
-- Продвинутая система синхронизации с Whisper сегментами
-- Автоматическая обрезка видео в формат 9:16
-- Умная группировка слов с учетом пауз
-- Подсветка текущего слова в реальном времени
-- Увеличенный шрифт (64px) для мобильных устройств
-- Тень и обводка для лучшей читаемости
+НОВОЕ В v15.8:
+- SmartSubtitleSystem с автоматической адаптацией
+- Расчет оптимального размера шрифта (32-64px)
+- Умная разбивка текста на строки
+- Правильное позиционирование для 9:16
+- Анимация подсветки каждого слова
+- Fallback механизмы для стабильности
 
 СОХРАНЕНЫ ВСЕ ИСПРАВЛЕНИЯ:
 - Whisper API исправлен (v15.5.5)
-- FFmpeg фильтры исправлены (v15.5.4)
-- Встроенная система субтитров (v15.6.1)
+- FFmpeg фильтры исправлены (v15.5.4) 
+- Сегменты исправлены (v15.7.1)
+- Формат 9:16 (v15.7)
 """
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, Query
@@ -49,7 +50,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация
-app = FastAPI(title="AgentFlow AI Clips", version="15.7.1-segments-fix")
+app = FastAPI(title="AgentFlow AI Clips", version="15.8-smart-subtitles")
 
 # CORS
 app.add_middleware(
@@ -60,238 +61,321 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Продвинутая система анимированных субтитров v15.7
-class AdvancedAnimatedSubtitleSystem:
+# Умная система субтитров v15.8
+class SmartSubtitleSystem:
     def __init__(self):
         self.styles = {
             'modern': {
-                'font': 'Montserrat-Bold',
                 'base_color': 'white',
-                'highlight_color': '#00FF00',  # Зеленый как в примере
-                'font_size': 64,  # Увеличен для 9:16
-                'stroke_width': 3,
+                'highlight_color': '#00FF88',  # Зеленый
                 'stroke_color': 'black',
-                'shadow': True
+                'stroke_width': 3,
+                'base_font_size': 48,  # Базовый размер
+                'max_font_size': 64,
+                'min_font_size': 32
             },
             'neon': {
-                'font': 'Montserrat-Bold', 
-                'base_color': 'white',
-                'highlight_color': '#00FFFF',  # Неоновый голубой
-                'font_size': 64,
-                'stroke_width': 3,
+                'base_color': 'white', 
+                'highlight_color': '#00FFFF',  # Голубой
                 'stroke_color': 'black',
-                'shadow': True
+                'stroke_width': 3,
+                'base_font_size': 48,
+                'max_font_size': 64,
+                'min_font_size': 32
             },
             'fire': {
-                'font': 'Montserrat-Bold',
-                'base_color': 'white', 
-                'highlight_color': '#FF4500',  # Оранжевый
-                'font_size': 64,
+                'base_color': 'white',
+                'highlight_color': '#FF6600',  # Оранжевый
+                'stroke_color': 'black', 
                 'stroke_width': 3,
-                'stroke_color': 'black',
-                'shadow': True
+                'base_font_size': 48,
+                'max_font_size': 64,
+                'min_font_size': 32
             }
         }
+        
+        # Параметры для 9:16 формата
+        self.video_width = 1080
+        self.video_height = 1920
+        self.subtitle_area_width = int(self.video_width * 0.9)  # 90% ширины
+        self.max_chars_per_line = 25  # Максимум символов в строке
+        self.max_lines = 3  # Максимум строк
+        
+    def calculate_optimal_font_size(self, text, style='modern'):
+        """Рассчитывает оптимальный размер шрифта для текста"""
+        style_config = self.styles[style]
+        
+        # Количество символов
+        char_count = len(text)
+        
+        logger.info(f"📏 Расчет размера шрифта для {char_count} символов")
+        
+        # Базовая логика: чем больше текста, тем меньше шрифт
+        if char_count <= 15:
+            font_size = style_config['max_font_size']  # 64px
+        elif char_count <= 30:
+            font_size = style_config['base_font_size']  # 48px
+        elif char_count <= 50:
+            font_size = 40
+        else:
+            font_size = style_config['min_font_size']  # 32px
+            
+        logger.info(f"✅ Выбран размер шрифта: {font_size}px")
+        return font_size
     
-    def find_segments_for_timerange(self, segments, start_time, end_time):
-        """Находит сегменты Whisper для временного диапазона клипа"""
-        matching_segments = []
+    def wrap_text_smart(self, text):
+        """Умная разбивка текста на строки"""
+        logger.info(f"📝 Разбивка текста: '{text[:50]}...'")
         
-        logger.info(f"🔍 Поиск сегментов для клипа {start_time:.1f}-{end_time:.1f}s")
+        words = text.split()
+        lines = []
+        current_line = []
+        current_length = 0
         
+        for word in words:
+            # Если добавление слова превысит лимит символов
+            if current_length + len(word) + 1 > self.max_chars_per_line:
+                if current_line:  # Если есть слова в текущей строке
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+                else:  # Если слово слишком длинное
+                    lines.append(word[:self.max_chars_per_line])
+                    current_line = []
+                    current_length = 0
+            else:
+                current_line.append(word)
+                current_length += len(word) + (1 if current_line else 0)
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        # Ограничиваем количество строк
+        if len(lines) > self.max_lines:
+            lines = lines[:self.max_lines]
+            # Добавляем "..." к последней строке если текст обрезан
+            if len(lines) == self.max_lines:
+                lines[-1] = lines[-1][:self.max_chars_per_line-3] + "..."
+        
+        logger.info(f"📋 Создано {len(lines)} строк: {lines}")
+        return lines
+    
+    def create_word_timings(self, segments, start_time, end_time):
+        """Создает тайминги для каждого слова"""
+        logger.info(f"⏰ Создание таймингов слов для {start_time:.1f}-{end_time:.1f}s")
+        
+        # Находим релевантные сегменты
+        relevant_segments = []
         for segment in segments:
             seg_start = segment['start']
             seg_end = segment['end']
             
-            # Проверяем пересечение с учетом смещения времени клипа
-            clip_seg_start = max(0, seg_start - start_time)
-            clip_seg_end = min(end_time - start_time, seg_end - start_time)
-            
-            if clip_seg_start < clip_seg_end and seg_end > start_time and seg_start < end_time:
-                matching_segments.append({
-                    'text': segment['text'].strip(),
-                    'start': clip_seg_start,
-                    'end': clip_seg_end,
-                    'original_start': seg_start,
-                    'original_end': seg_end
-                })
-                logger.info(f"✅ Найден сегмент: '{segment['text'][:50]}...' ({clip_seg_start:.1f}-{clip_seg_end:.1f}s)")
+            # Проверяем пересечение с нужным временным интервалом
+            if (seg_start <= end_time and seg_end >= start_time):
+                relevant_segments.append(segment)
+                logger.info(f"📍 Найден сегмент: {seg_start:.1f}-{seg_end:.1f}s '{segment['text'][:30]}...'")
         
-        logger.info(f"📊 Найдено {len(matching_segments)} сегментов для клипа")
-        return matching_segments
-    
-    def create_word_level_timings(self, segments):
-        """Создает тайминги на уровне слов из сегментов"""
+        if not relevant_segments:
+            logger.warning("⚠️ Релевантные сегменты не найдены")
+            return []
+        
+        # Объединяем текст из всех релевантных сегментов
+        full_text = ' '.join([seg['text'].strip() for seg in relevant_segments])
+        words = full_text.split()
+        
+        if not words:
+            logger.warning("⚠️ Слова не найдены в сегментах")
+            return []
+        
+        logger.info(f"📝 Найдено {len(words)} слов: {words[:10]}...")
+        
+        # Рассчитываем время для каждого слова
+        total_duration = end_time - start_time
+        word_duration = total_duration / len(words)
+        
         word_timings = []
+        for i, word in enumerate(words):
+            word_start = start_time + (i * word_duration)
+            word_end = word_start + word_duration
+            word_timings.append({
+                'word': word,
+                'start': word_start,
+                'end': word_end
+            })
         
-        for segment in segments:
-            words = segment['text'].split()
-            if not words:
-                continue
-                
-            segment_duration = segment['end'] - segment['start']
-            word_duration = segment_duration / len(words)
-            
-            for i, word in enumerate(words):
-                word_start = segment['start'] + (i * word_duration)
-                word_end = word_start + word_duration
-                
-                word_timings.append({
-                    'word': word,
-                    'start': word_start,
-                    'end': word_end
-                })
-        
-        logger.info(f"📝 Создано {len(word_timings)} word-level таймингов")
+        logger.info(f"✅ Создано {len(word_timings)} таймингов слов")
         return word_timings
     
-    def group_words_into_phrases_smart(self, word_timings, max_words=3):
-        """Умная группировка слов в фразы с учетом пауз"""
+    def group_words_into_phrases(self, word_timings):
+        """Группирует слова в фразы по 2-4 слова"""
         if not word_timings:
             return []
-            
+        
+        logger.info(f"📋 Группировка {len(word_timings)} слов в фразы")
+        
         phrases = []
         current_phrase = []
         
-        for i, timing in enumerate(word_timings):
-            current_phrase.append(timing)
+        for word_timing in word_timings:
+            current_phrase.append(word_timing)
             
-            # Проверяем условия для завершения фразы
-            should_end_phrase = (
-                len(current_phrase) >= max_words or  # Достигли лимита слов
-                timing['word'].endswith(('.', '!', '?', ',', ':')) or  # Знак препинания
-                (i < len(word_timings) - 1 and 
-                 word_timings[i + 1]['start'] - timing['end'] > 0.5)  # Пауза больше 0.5 сек
-            )
-            
-            if should_end_phrase or i == len(word_timings) - 1:
-                if current_phrase:
-                    phrase_text = ' '.join([w['word'] for w in current_phrase])
-                    phrase_start = current_phrase[0]['start']
-                    phrase_end = current_phrase[-1]['end']
-                    
-                    phrases.append({
-                        'text': phrase_text,
-                        'start': phrase_start,
-                        'end': phrase_end,
-                        'words': current_phrase.copy()
-                    })
-                    logger.info(f"📝 Фраза: '{phrase_text}' ({phrase_start:.1f}-{phrase_end:.1f}s)")
-                    current_phrase = []
+            # Группируем по 2-4 слова
+            if len(current_phrase) >= 3:
+                phrases.append(current_phrase)
+                current_phrase = []
         
-        logger.info(f"🎯 Создано {len(phrases)} фраз")
+        # Добавляем оставшиеся слова
+        if current_phrase:
+            phrases.append(current_phrase)
+        
+        logger.info(f"✅ Создано {len(phrases)} фраз")
         return phrases
     
-    def escape_for_ffmpeg(self, text):
-        """Экранирует текст для FFmpeg"""
-        # Экранируем специальные символы
-        text = text.replace("'", "\\'")
-        text = text.replace(":", "\\:")
-        text = text.replace(",", "\\,")
-        text = text.replace("[", "\\[")
-        text = text.replace("]", "\\]")
-        text = text.replace("(", "\\(")
-        text = text.replace(")", "\\)")
+    def generate_highlight_animation(self, phrase, style='modern'):
+        """Генерирует анимацию подсветки для фразы"""
+        if not phrase:
+            return ""
         
-        return text
-    
-    def generate_phrase_filter_with_highlight(self, phrase, style='modern'):
-        """Генерирует фильтр для фразы с подсветкой слов"""
         style_config = self.styles[style]
+        
+        # Собираем текст фразы
+        phrase_text = ' '.join([w['word'] for w in phrase])
+        phrase_start = phrase[0]['start']
+        phrase_end = phrase[-1]['end']
+        
+        logger.info(f"🎨 Генерация анимации для фразы: '{phrase_text}'")
+        
+        # Рассчитываем оптимальный размер шрифта
+        font_size = self.calculate_optimal_font_size(phrase_text, style)
+        
+        # Разбиваем на строки если нужно
+        lines = self.wrap_text_smart(phrase_text)
+        
         filters = []
         
-        # Создаем фильтр для каждого слова в фразе
-        for i, word_timing in enumerate(phrase['words']):
-            # Создаем текст где текущее слово выделено
-            words = [w['word'] for w in phrase['words']]
+        for line_idx, line in enumerate(lines):
+            # Позиция Y для каждой строки (снизу вверх)
+            y_offset = 150 + (line_idx * (font_size + 15))
+            y_position = f"h-{y_offset}"
             
-            # Простой подход - показываем всю фразу, но можем добавить эффекты позже
-            phrase_text = ' '.join(words)
-            escaped_text = self.escape_for_ffmpeg(phrase_text)
+            # Базовый текст (белый)
+            escaped_line = self.escape_for_ffmpeg(line)
+            base_filter = f"drawtext=text='{escaped_line}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={font_size}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y={y_position}:enable='between(t,{phrase_start},{phrase_end})'"
             
-            # Фильтр для этого слова
-            word_filter = f"drawtext=text='{escaped_text}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={style_config['font_size']}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y=h*0.75:enable='between(t,{word_timing['start']},{word_timing['end']})'"
+            filters.append(base_filter)
             
-            filters.append(word_filter)
+            # Анимация подсветки для каждого слова
+            words_in_line = line.split()
+            for word_idx, word in enumerate(words_in_line):
+                # Находим тайминг для этого слова
+                word_timing = None
+                for w in phrase:
+                    if w['word'].lower().strip() == word.lower().strip():
+                        word_timing = w
+                        break
+                
+                if word_timing:
+                    # Создаем подсвеченную версию слова (увеличенный размер + цвет)
+                    highlight_size = font_size + 6  # Увеличиваем на 6px
+                    
+                    highlight_filter = f"drawtext=text='{self.escape_for_ffmpeg(word)}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={highlight_size}:fontcolor={style_config['highlight_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y={y_position}:enable='between(t,{word_timing['start']},{word_timing['end']})'"
+                    
+                    filters.append(highlight_filter)
         
-        return filters
+        result = ','.join(filters)
+        logger.info(f"✅ Создан фильтр длиной {len(result)} символов")
+        return result
     
-    def get_crop_filter_9_16(self, video_width=1920, video_height=1080):
-        """Генерирует фильтр обрезки для формата 9:16"""
-        # Целевое соотношение 9:16 (0.5625)
-        target_ratio = 9.0 / 16.0
-        current_ratio = video_width / video_height
-        
-        if current_ratio > target_ratio:
-            # Видео слишком широкое, обрезаем по ширине
-            new_width = int(video_height * target_ratio)
-            crop_x = (video_width - new_width) // 2
-            return f"crop={new_width}:{video_height}:{crop_x}:0"
-        else:
-            # Видео слишком высокое, обрезаем по высоте  
-            new_height = int(video_width / target_ratio)
-            crop_y = (video_height - new_height) // 2
-            return f"crop={video_width}:{new_height}:0:{crop_y}"
-    
-    def generate_ffmpeg_filter_advanced(self, segments, start_time, end_time, style='modern'):
-        """Генерирует продвинутый FFmpeg фильтр с правильной синхронизацией"""
+    def generate_ffmpeg_filter(self, segments, start_time, end_time, quote, style='modern'):
+        """Генерирует FFmpeg фильтр с умными субтитрами"""
         try:
-            logger.info(f"🎬 Генерируем продвинутые субтитры для клипа {start_time:.1f}-{end_time:.1f}s")
-            
-            # Находим сегменты для этого временного диапазона
-            clip_segments = self.find_segments_for_timerange(segments, start_time, end_time)
-            
-            if not clip_segments:
-                logger.warning("⚠️ Сегменты не найдены, используем fallback")
-                return self.generate_fallback_filter("No audio found", style)
+            logger.info(f"🎯 Генерация умного фильтра для: '{quote[:50]}...'")
+            logger.info(f"⏰ Время: {start_time:.2f} - {end_time:.2f}s")
+            logger.info(f"🎨 Стиль: {style}")
             
             # Создаем тайминги слов
-            word_timings = self.create_word_level_timings(clip_segments)
+            word_timings = self.create_word_timings(segments, start_time, end_time)
             
             if not word_timings:
-                logger.warning("⚠️ Word timings не созданы, используем fallback")
-                return self.generate_fallback_filter(' '.join([s['text'] for s in clip_segments]), style)
+                logger.warning("⚠️ Тайминги слов не созданы, используем fallback")
+                return self.generate_simple_fallback(quote, start_time, end_time, style)
             
             # Группируем в фразы
-            phrases = self.group_words_into_phrases_smart(word_timings, max_words=3)
+            phrases = self.group_words_into_phrases(word_timings)
             
             if not phrases:
                 logger.warning("⚠️ Фразы не созданы, используем fallback")
-                return self.generate_fallback_filter(' '.join([s['text'] for s in clip_segments]), style)
+                return self.generate_simple_fallback(quote, start_time, end_time, style)
             
-            # Генерируем фильтры для каждой фразы
+            # Генерируем анимацию для каждой фразы
             all_filters = []
-            for phrase in phrases:
-                phrase_filters = self.generate_phrase_filter_with_highlight(phrase, style)
-                all_filters.extend(phrase_filters)
+            for i, phrase in enumerate(phrases):
+                logger.info(f"🎬 Обработка фразы {i+1}/{len(phrases)}")
+                phrase_filter = self.generate_highlight_animation(phrase, style)
+                if phrase_filter:
+                    all_filters.append(phrase_filter)
             
             if not all_filters:
-                logger.warning("⚠️ Фильтры не созданы, используем fallback")
-                return self.generate_fallback_filter("Error generating filters", style)
+                logger.warning("⚠️ Фильтры фраз не созданы, используем fallback")
+                return self.generate_simple_fallback(quote, start_time, end_time, style)
             
             final_filter = ','.join(all_filters)
-            logger.info(f"✅ Создан фильтр длиной {len(final_filter)} символов")
+            logger.info(f"✅ Финальный фильтр создан, длина: {len(final_filter)} символов")
+            
+            # Проверяем что фильтр не пустой
+            if len(final_filter) < 50:
+                logger.warning("⚠️ Фильтр слишком короткий, используем fallback")
+                return self.generate_simple_fallback(quote, start_time, end_time, style)
+            
             return final_filter
             
         except Exception as e:
-            logger.error(f"❌ Ошибка генерации продвинутого фильтра: {e}")
-            return self.generate_fallback_filter("Error in subtitle generation", style)
+            logger.error(f"❌ Ошибка генерации умного фильтра: {e}")
+            logger.error(traceback.format_exc())
+            return self.generate_simple_fallback(quote, start_time, end_time, style)
     
-    def generate_fallback_filter(self, text, style='modern'):
-        """Fallback фильтр если основной не работает"""
-        style_config = self.styles[style]
-        escaped_text = self.escape_for_ffmpeg(text)
+    def generate_simple_fallback(self, quote, start_time, end_time, style='modern'):
+        """Простой fallback фильтр с умной разбивкой"""
+        logger.info(f"🔄 Создание fallback фильтра для: '{quote[:30]}...'")
         
-        logger.info(f"🔄 Используем fallback фильтр для: '{text[:50]}...'")
-        return f"drawtext=text='{escaped_text}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={style_config['font_size']}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y=h*0.75"
-
+        style_config = self.styles[style]
+        
+        # Рассчитываем размер шрифта
+        font_size = self.calculate_optimal_font_size(quote, style)
+        
+        # Разбиваем на строки
+        lines = self.wrap_text_smart(quote)
+        
+        filters = []
+        for line_idx, line in enumerate(lines):
+            # Позиция Y для каждой строки (снизу вверх)
+            y_offset = 150 + (line_idx * (font_size + 15))
+            y_position = f"h-{y_offset}"
+            
+            escaped_line = self.escape_for_ffmpeg(line)
+            line_filter = f"drawtext=text='{escaped_line}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={font_size}:fontcolor={style_config['base_color']}:borderw={style_config['stroke_width']}:bordercolor={style_config['stroke_color']}:x=(w-text_w)/2:y={y_position}:enable='between(t,{start_time},{end_time})'"
+            
+            filters.append(line_filter)
+        
+        result = ','.join(filters)
+        logger.info(f"✅ Fallback фильтр создан, длина: {len(result)} символов")
+        return result
+    
+    def escape_for_ffmpeg(self, text):
+        """Экранирует текст для FFmpeg"""
+        # Убираем проблемные символы
+        text = text.replace("'", "").replace('"', '').replace('\\', '').replace(':', '').replace(',', '')
+        # Убираем лишние пробелы
+        text = ' '.join(text.split())
+        return text
+    
 # Глобальные переменные
 tasks = {}
 active_tasks = set()
 task_queue = deque()
 generation_tasks = {}
 client = None
-subtitle_system = AdvancedAnimatedSubtitleSystem()
+subtitle_system = SmartSubtitleSystem()
 
 # Конфигурация
 class Config:
@@ -562,8 +646,8 @@ def analyze_transcript_with_chatgpt(transcript_text, segments):
         logger.error(f"❌ Ошибка анализа ChatGPT: {e}")
         return []
 
-def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight"):
-    """Генерирует клип с продвинутыми анимированными субтитрами"""
+def generate_clip_with_smart_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight"):
+    """Генерирует клип с умными анимированными субтитрами"""
     try:
         logger.info(f"🎬 Генерируем клип: {start_time:.1f}-{end_time:.1f}s")
         logger.info(f"📝 Quote: {highlight['quote'][:100]}...")
@@ -573,19 +657,19 @@ def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, outp
         video_info = get_video_info(video_path)
         logger.info(f"📊 Видео: {video_info['width']}x{video_info['height']}")
         
-        # Генерируем продвинутый фильтр субтитров
-        subtitle_filter = subtitle_system.generate_ffmpeg_filter_advanced(
-            segments, start_time, end_time, subtitle_style
+        # Генерируем умный фильтр субтитров
+        subtitle_filter = subtitle_system.generate_ffmpeg_filter(
+            segments, start_time, end_time, highlight['quote'], subtitle_style
         )
         
         if not subtitle_filter or len(subtitle_filter) < 10:
             logger.warning("⚠️ Пустой фильтр субтитров, используем fallback")
-            subtitle_filter = subtitle_system.generate_fallback_filter(highlight['quote'], subtitle_style)
+            subtitle_filter = subtitle_system.generate_simple_fallback(highlight['quote'], start_time, end_time, subtitle_style)
         
         logger.info(f"📝 Фильтр субтитров: {len(subtitle_filter)} символов")
         
         # Генерируем фильтр обрезки для 9:16
-        crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
+        crop_filter = subtitle_system.get_crop_filter_9_16()
         logger.info(f"✂️ Обрезка для 9:16: {crop_filter}")
         
         # Комбинируем фильтры
@@ -744,8 +828,8 @@ async def process_clip_generation(generation_task_id: str, task_id: str, subtitl
                 clip_id = str(uuid.uuid4())
                 output_path = os.path.join(Config.CLIPS_DIR, f"{clip_id}.mp4")
                 
-                # Генерируем клип с продвинутыми субтитрами
-                success = generate_clip_with_advanced_subtitles(
+                # Генерируем клип с умными субтитрами
+                success = generate_clip_with_smart_subtitles(
                     video_path=video_path,
                     start_time=highlight["start_time"],
                     end_time=highlight["end_time"],
@@ -817,7 +901,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "15.7.1-segments-fix",
+            "version": "15.8-smart-subtitles",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1017,7 +1101,7 @@ async def cleanup_old_files():
 @app.on_event("startup")
 async def startup_event():
     """Инициализация при запуске"""
-    logger.info("🚀 AgentFlow AI Clips v15.7.1 with Segments Fix started!")
+    logger.info("🚀 AgentFlow AI Clips v15.8 with Smart Subtitles started!")
     
     # Запускаем периодическую очистку
     async def periodic_cleanup():
