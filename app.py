@@ -1106,7 +1106,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-              version="17.9.0-full-with-fixed-subtitles"",
+            "version": "17.9.0-full-with-fixed-subtitles",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
