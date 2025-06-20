@@ -695,8 +695,43 @@ def transcribe_audio(audio_path: str) -> Tuple[str, List[Dict]]:
                     'start': word.start,
                     'end': word.end
                 })
+        elif hasattr(transcript, 'segments') and transcript.segments:
+            # Fallback для старых версий API - используем segments
+            logger.info("📝 Используем segments вместо words")
+            for segment in transcript.segments:
+                if hasattr(segment, 'words') and segment.words:
+                    for word in segment.words:
+                        words_data.append({
+                            'word': word.word,
+                            'start': word.start,
+                            'end': word.end
+                        })
+                else:
+                    # Если нет word-level timestamps, создаем примерные
+                    segment_words = segment.text.split()
+                    word_duration = (segment.end - segment.start) / len(segment_words) if segment_words else 1.0
+                    for i, word in enumerate(segment_words):
+                        words_data.append({
+                            'word': word,
+                            'start': segment.start + i * word_duration,
+                            'end': segment.start + (i + 1) * word_duration
+                        })
+        else:
+            # Если совсем нет word-level данных, создаем базовую разбивку
+            logger.warning("⚠️ Нет word-level данных, создаем примерную разбивку")
+            words = full_text.split()
+            estimated_duration = 60.0  # Примерная длительность
+            word_duration = estimated_duration / len(words) if words else 1.0
+            
+            for i, word in enumerate(words):
+                words_data.append({
+                    'word': word,
+                    'start': i * word_duration,
+                    'end': (i + 1) * word_duration
+                })
         
         logger.info(f"✅ Транскрибация завершена: {len(words_data)} слов")
+        logger.info(f"📝 Текст: {full_text[:100]}..." if len(full_text) > 100 else f"📝 Текст: {full_text}")
         return full_text, words_data
         
     except Exception as e:
