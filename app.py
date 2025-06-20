@@ -81,47 +81,55 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа в секундах
     CLEANUP_INTERVAL = 3600  # Очистка каждый час (3600 секунд)
     
-    # ASS стили для караоке-эффектов (оптимизированы для разных форматов)
+    # ASS стили для караоке-эффектов (оптимизированы как в Opus.pro)
     ASS_STYLES = {
         "modern": {
             "fontname": "Arial",
-            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
-            "primarycolor": "&H00FFFFFF",  # Белый
-            "secondarycolor": "&H0000FF00",  # Зеленый для караоке
+            "fontsize": 32,  # ✅ УМЕНЬШЕНО еще больше с 42 до 32
+            "primarycolor": "&H00FFFFFF",  # ✅ Белый текст (основной)
+            "secondarycolor": "&H0000FF00",  # ✅ Зеленая подсветка (караоке)
             "outlinecolor": "&H00000000",   # Черная обводка
             "backcolor": "&H80000000",      # Полупрозрачный фон
-            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
-            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,  # ✅ Выравнивание по центру снизу
+            "marginv": 80    # ✅ Safe zone: отступ снизу 80px
         },
         "neon": {
             "fontname": "Arial",
-            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
-            "primarycolor": "&H00FFFF00",  # Cyan
-            "secondarycolor": "&H00FF00FF",  # Magenta для караоке
+            "fontsize": 32,
+            "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
+            "secondarycolor": "&H00FF00FF",  # ✅ Magenta подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
-            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,
+            "marginv": 80
         },
         "fire": {
             "fontname": "Arial",
-            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
-            "primarycolor": "&H000066FF",  # Оранжевый
-            "secondarycolor": "&H0000FFFF",  # Желтый для караоке
+            "fontsize": 32,
+            "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
+            "secondarycolor": "&H0000FFFF",  # ✅ Желтая подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
-            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,
+            "marginv": 80
         },
         "elegant": {
             "fontname": "Arial",
-            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
-            "primarycolor": "&H0000D7FF",  # Золотой
-            "secondarycolor": "&H0000FFFF",  # Желтый для караоке
+            "fontsize": 32,
+            "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
+            "secondarycolor": "&H0000D7FF",  # ✅ Золотая подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
-            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
+            "outline": 2,
+            "shadow": 1,
+            "alignment": 2,
+            "marginv": 80
         }
     }
 
@@ -261,7 +269,7 @@ YCbCr Matrix: TV.709
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},1,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},2,10,10,10,1
+Style: Default,{style_config['fontname']},{style_config['fontsize']},{style_config['primarycolor']},{style_config['secondarycolor']},{style_config['outlinecolor']},{style_config['backcolor']},1,0,0,0,100,100,0,0,1,{style_config['outline']},{style_config['shadow']},{style_config['alignment']},10,10,{style_config['marginv']},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -292,8 +300,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.error(f"❌ Ошибка создания ASS файла: {e}")
             raise
     
-    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 6) -> List[Dict]:
-        """Группирует слова в фразы для оптимального отображения"""
+    def _group_words_into_phrases(self, words_data: List[Dict], max_words_per_phrase: int = 4) -> List[Dict]:
+        """Группирует слова в фразы для оптимального отображения (3-5 слов как в Opus.pro)"""
         phrases = []
         current_phrase = []
         
