@@ -81,47 +81,47 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа в секундах
     CLEANUP_INTERVAL = 3600  # Очистка каждый час (3600 секунд)
     
-    # ASS стили для караоке-эффектов
+    # ASS стили для караоке-эффектов (оптимизированы для разных форматов)
     ASS_STYLES = {
         "modern": {
             "fontname": "Arial",
-            "fontsize": 64,
+            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
             "primarycolor": "&H00FFFFFF",  # Белый
             "secondarycolor": "&H0000FF00",  # Зеленый для караоке
             "outlinecolor": "&H00000000",   # Черная обводка
             "backcolor": "&H80000000",      # Полупрозрачный фон
-            "outline": 3,
-            "shadow": 2
+            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
+            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
         },
         "neon": {
             "fontname": "Arial",
-            "fontsize": 64,
+            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
             "primarycolor": "&H00FFFF00",  # Cyan
             "secondarycolor": "&H00FF00FF",  # Magenta для караоке
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 3,
-            "shadow": 2
+            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
+            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
         },
         "fire": {
             "fontname": "Arial",
-            "fontsize": 64,
-            "primarycolor": "&H000066FF",  # Orange
-            "secondarycolor": "&H0000FFFF",  # Yellow для караоке
+            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
+            "primarycolor": "&H000066FF",  # Оранжевый
+            "secondarycolor": "&H0000FFFF",  # Желтый для караоке
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 3,
-            "shadow": 2
+            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
+            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
         },
         "elegant": {
             "fontname": "Arial",
-            "fontsize": 64,
-            "primarycolor": "&H0000D7FF",  # Gold
-            "secondarycolor": "&H0000FFFF",  # Yellow для караоке
+            "fontsize": 42,  # ✅ УМЕНЬШЕНО с 64 до 42
+            "primarycolor": "&H0000D7FF",  # Золотой
+            "secondarycolor": "&H0000FFFF",  # Желтый для караоке
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 3,
-            "shadow": 2
+            "outline": 2,  # ✅ УМЕНЬШЕНО с 3 до 2
+            "shadow": 1    # ✅ УМЕНЬШЕНО с 2 до 1
         }
     }
 
