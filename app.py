@@ -77,6 +77,10 @@ class Config:
     MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     
+    # Настройки очистки и задач
+    MAX_TASK_AGE = 24 * 60 * 60  # 24 часа в секундах
+    CLEANUP_INTERVAL = 3600  # Очистка каждый час (3600 секунд)
+    
     # ASS стили для караоке-эффектов
     ASS_STYLES = {
         "modern": {
