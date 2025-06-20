@@ -1087,6 +1087,10 @@ async def process_video_analysis(task_id: str, video_path: str):
         analysis_result = analyze_content_with_chatgpt(transcript)
         
         # Завершаем анализ
+        # Получаем информацию о видео для duration
+        video_path = os.path.join(Config.UPLOAD_DIR, f"{task_id}.mp4")
+        video_info = get_video_info(video_path)
+        
         processing_time = time.time() - start_time
         
         analysis_tasks[task_id].update({
@@ -1097,6 +1101,8 @@ async def process_video_analysis(task_id: str, video_path: str):
             "words_data": words_data,  # Сохраняем для генерации клипов
             "highlights": analysis_result.get("highlights", []),
             "viral_score": analysis_result.get("viral_score", 50),
+            "duration": video_info['duration'],  # ✅ ДОБАВЛЯЕМ DURATION!
+            "video_path": video_path,  # ✅ ДОБАВЛЯЕМ ПУТЬ К ВИДЕО!
             "processing_time": processing_time
         })
         
@@ -1159,7 +1165,8 @@ async def process_clip_generation(task_id: str, video_id: str, format_id: str, s
         for i, highlight in enumerate(highlights):
             try:
                 # Ограничиваем highlight длительностью видео
-                video_duration = analysis_tasks[video_id]["result"]["duration"]
+                analysis_task = analysis_tasks[video_id]
+                video_duration = analysis_task.get("duration", 60)  # Fallback к 60 секундам
                 highlight_start = min(highlight["start"], video_duration - 5)  # Минимум 5 сек до конца
                 highlight_end = min(highlight["end"], video_duration)
                 
