@@ -81,55 +81,55 @@ class Config:
     MAX_TASK_AGE = 24 * 60 * 60  # 24 часа в секундах
     CLEANUP_INTERVAL = 3600  # Очистка каждый час (3600 секунд)
     
-    # ASS стили для караоке-эффектов (оптимизированы как в Opus.pro)
+    # ASS стили для караоке-эффектов (размер как в Opus.pro)
     ASS_STYLES = {
         "modern": {
             "fontname": "Arial",
-            "fontsize": 32,  # ✅ УМЕНЬШЕНО еще больше с 42 до 32
+            "fontsize": 16,  # ✅ КАРДИНАЛЬНО УМЕНЬШЕНО до 16px как в Opus.pro
             "primarycolor": "&H00FFFFFF",  # ✅ Белый текст (основной)
             "secondarycolor": "&H0000FF00",  # ✅ Зеленая подсветка (караоке)
             "outlinecolor": "&H00000000",   # Черная обводка
             "backcolor": "&H80000000",      # Полупрозрачный фон
-            "outline": 2,
-            "shadow": 1,
+            "outline": 1,  # ✅ УМЕНЬШЕНО до 1
+            "shadow": 0,   # ✅ УБРАНА тень
             "alignment": 2,  # ✅ Выравнивание по центру снизу
-            "marginv": 80    # ✅ Safe zone: отступ снизу 80px
+            "marginv": 60    # ✅ Safe zone: отступ снизу 60px
         },
         "neon": {
             "fontname": "Arial",
-            "fontsize": 32,
+            "fontsize": 16,
             "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
             "secondarycolor": "&H00FF00FF",  # ✅ Magenta подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,
-            "shadow": 1,
+            "outline": 1,
+            "shadow": 0,
             "alignment": 2,
-            "marginv": 80
+            "marginv": 60
         },
         "fire": {
             "fontname": "Arial",
-            "fontsize": 32,
+            "fontsize": 16,
             "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
             "secondarycolor": "&H0000FFFF",  # ✅ Желтая подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,
-            "shadow": 1,
+            "outline": 1,
+            "shadow": 0,
             "alignment": 2,
-            "marginv": 80
+            "marginv": 60
         },
         "elegant": {
             "fontname": "Arial",
-            "fontsize": 32,
+            "fontsize": 16,
             "primarycolor": "&H00FFFFFF",  # ✅ Белый текст
             "secondarycolor": "&H0000D7FF",  # ✅ Золотая подсветка
             "outlinecolor": "&H00000000",
             "backcolor": "&H80000000",
-            "outline": 2,
-            "shadow": 1,
+            "outline": 1,
+            "shadow": 0,
             "alignment": 2,
-            "marginv": 80
+            "marginv": 60
         }
     }
 
@@ -911,16 +911,22 @@ def create_clip_with_ass_subtitles(
         # Фильтруем слова для данного временного отрезка
         clip_words = []
         for word_data in words_data:
-            word_start = word_data['start'] - start_time  # Относительное время
-            word_end = word_data['end'] - start_time
-            
-            # Слово должно быть в пределах клипа
-            if word_end > 0 and word_start < (end_time - start_time):
-                clip_words.append({
-                    'word': word_data['word'],
-                    'start': max(0, word_start),
-                    'end': min(end_time - start_time, word_end)
-                })
+            # Проверяем что слово попадает в временной интервал клипа
+            if (word_data['start'] >= start_time and word_data['start'] < end_time) or \
+               (word_data['end'] > start_time and word_data['end'] <= end_time) or \
+               (word_data['start'] < start_time and word_data['end'] > end_time):
+                
+                # Корректируем время относительно начала клипа
+                word_start = max(0, word_data['start'] - start_time)
+                word_end = min(end_time - start_time, word_data['end'] - start_time)
+                
+                # Добавляем только если есть пересечение
+                if word_end > word_start:
+                    clip_words.append({
+                        'word': word_data['word'],
+                        'start': word_start,
+                        'end': word_end
+                    })
         
         logger.info(f"📝 Найдено {len(clip_words)} слов для субтитров")
         
@@ -1152,6 +1158,16 @@ async def process_clip_generation(task_id: str, video_id: str, format_id: str, s
         
         for i, highlight in enumerate(highlights):
             try:
+                # Ограничиваем highlight длительностью видео
+                video_duration = analysis_tasks[video_id]["result"]["duration"]
+                highlight_start = min(highlight["start"], video_duration - 5)  # Минимум 5 сек до конца
+                highlight_end = min(highlight["end"], video_duration)
+                
+                # Пропускаем если highlight выходит за пределы видео
+                if highlight_start >= video_duration or highlight_end <= highlight_start:
+                    logger.warning(f"⚠️ Пропускаем клип {i+1}: выходит за пределы видео ({highlight_start}-{highlight_end}s vs {video_duration}s)")
+                    continue
+                
                 # Обновляем прогресс
                 progress = 20 + (i * 70 // total_clips)
                 generation_tasks[task_id].update({
@@ -1163,11 +1179,11 @@ async def process_clip_generation(task_id: str, video_id: str, format_id: str, s
                 clip_filename = f"clip_{i+1}_{style_id}_{format_id}.mp4"
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
                 
-                # Создаем клип с ASS субтитрами
+                # Создаем клип с ASS субтитрами (с исправленными временными рамками)
                 success = create_clip_with_ass_subtitles(
                     video_path=video_path,
-                    start_time=highlight["start"],
-                    end_time=highlight["end"],
+                    start_time=highlight_start,
+                    end_time=highlight_end,
                     words_data=words_data,
                     output_path=clip_path,
                     format_type=format_id,
