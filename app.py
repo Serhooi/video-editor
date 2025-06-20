@@ -502,7 +502,7 @@ def get_video_info(video_path: str) -> Dict:
             '-show_format', '-show_streams', video_path
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
         
         if result.returncode == 0:
             info = json.loads(result.stdout)
@@ -541,7 +541,7 @@ def transcribe_audio_chunked(audio_path: str, chunk_duration: int = 300) -> List
         # Получаем длительность аудио
         cmd = ['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration', 
                '-of', 'csv=p=0', audio_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore")
         
         if result.returncode != 0:
             raise Exception("Не удалось получить длительность аудио")
@@ -579,13 +579,34 @@ def transcribe_audio_chunked(audio_path: str, chunk_duration: int = 300) -> List
                 # Транскрибируем чанк
                 logger.info(f"🎤 Транскрибируем чанк {chunk_start}-{chunk_end}")
                 
-                with open(chunk_path, 'rb') as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file,
-                        response_format="verbose_json",
-                        timestamp_granularities=["word"]
-                    )
+                # Безопасная транскрибация чанка с fallback
+                transcript = None
+                try:
+                    # Пробуем новый API
+                    with open(chunk_path, 'rb') as audio_file:
+                        transcript = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=audio_file,
+                            response_format="verbose_json"
+                            # ✅ ИСПРАВЛЕНО: убран timestamp_granularities
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ Новый API не работает для чанка {i}, пробуем fallback: {e}")
+                    try:
+                        # Fallback к старому API
+                        with open(chunk_path, 'rb') as audio_file:
+                            transcript = client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=audio_file,
+                                response_format="json"
+                            )
+                    except Exception as e2:
+                        logger.error(f"❌ Не удалось транскрибировать чанк {i}: {e2}")
+                        continue
+                
+                if not transcript:
+                    logger.error(f"❌ Не удалось получить транскрипт для чанка {i}")
+                    continue
                 
                 # Обрабатываем результат
                 if hasattr(transcript, 'words') and transcript.words:
@@ -635,13 +656,33 @@ def transcribe_audio(audio_path: str) -> Tuple[str, List[Dict]]:
         # Обычная транскрибация для небольших файлов
         logger.info("🎤 Начинаем транскрибацию аудио...")
         
-        with open(audio_path, 'rb') as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json",
-                timestamp_granularities=["word"]
-            )
+        # Безопасная транскрибация с fallback для разных версий API
+        transcript = None
+        try:
+            # Пробуем новый API с verbose_json
+            with open(audio_path, 'rb') as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="verbose_json"
+                    # ✅ ИСПРАВЛЕНО: убран timestamp_granularities
+                )
+        except Exception as e:
+            logger.warning(f"⚠️ Новый API не работает, пробуем fallback: {e}")
+            try:
+                # Fallback к старому API
+                with open(audio_path, 'rb') as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="json"
+                    )
+            except Exception as e2:
+                logger.error(f"❌ Все методы транскрибации не работают: {e2}")
+                raise Exception("Не удалось получить транскрипт")
+        
+        if not transcript:
+            raise Exception("Не удалось получить транскрипт")
         
         full_text = transcript.text
         words_data = []
@@ -819,7 +860,7 @@ def create_clip_with_ass_subtitles(
         ]
         
         logger.info("🎬 ЭТАП 1: Создаем базовое видео...")
-        result = subprocess.run(base_cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(base_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
         
         if result.returncode != 0:
             logger.error(f"❌ ЭТАП 1 неудачен: {result.stderr}")
@@ -847,7 +888,7 @@ def create_clip_with_ass_subtitles(
                 ]
                 
                 logger.info("📝 ЭТАП 2: Накладываем ASS субтитры...")
-                result = subprocess.run(subtitle_cmd, capture_output=True, text=True, timeout=300)
+                result = subprocess.run(subtitle_cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
                 
                 if result.returncode == 0:
                     logger.info("✅ ЭТАП 2 завершен: ASS субтитры наложены")
