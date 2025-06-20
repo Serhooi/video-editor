@@ -610,6 +610,206 @@ def analyze_transcript_with_chatgpt(transcript_text, segments):
             "viral_score": 65
         }]
 
+def generate_clip_with_two_stage_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight", format_id="9:16"):
+    """Генерирует клип с двухэтапной системой субтитров - КАК В OPUS.PRO"""
+    try:
+        logger.info(f"🎬 ДВУХЭТАПНАЯ генерация клипа: {start_time:.1f}-{end_time:.1f}s")
+        logger.info(f"📝 Quote: {highlight['quote'][:100]}...")
+        logger.info(f"🎨 Стиль: {subtitle_style}, формат: {format_id}")
+        
+        # Получаем информацию о видео
+        video_info = get_video_info(video_path)
+        logger.info(f"📊 Видео: {video_info['width']}x{video_info['height']}")
+        
+        # Создаем временный файл
+        temp_video_path = output_path.replace('.mp4', '_temp.mp4')
+        
+        # ЭТАП 1: Создаем базовое видео с обрезкой (БЕЗ субтитров)
+        logger.info("🎬 ЭТАП 1: Создаем базовое видео с обрезкой")
+        
+        # Генерируем фильтр обрезки
+        if format_id == "9:16":
+            crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
+        elif format_id == "16:9":
+            crop_filter = ""  # Оригинальный формат
+        elif format_id == "1:1":
+            crop_filter = subtitle_system.get_crop_filter_1_1(video_info['width'], video_info['height'])
+        elif format_id == "4:5":
+            crop_filter = subtitle_system.get_crop_filter_4_5(video_info['width'], video_info['height'])
+        else:
+            crop_filter = subtitle_system.get_crop_filter_9_16(video_info['width'], video_info['height'])
+        
+        logger.info(f"✂️ Обрезка для {format_id}: {crop_filter}")
+        
+        # Команда для этапа 1
+        stage1_cmd = [
+            'ffmpeg', '-i', video_path,
+            '-ss', str(start_time),
+            '-t', str(end_time - start_time),
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-preset', 'fast',
+            '-crf', '23'
+        ]
+        
+        if crop_filter:
+            stage1_cmd.extend(['-vf', crop_filter])
+        
+        stage1_cmd.extend(['-y', temp_video_path])
+        
+        logger.info(f"🔧 ЭТАП 1 команда: {len(' '.join(stage1_cmd))} символов")
+        
+        # Выполняем этап 1
+        result1 = subprocess.run(stage1_cmd, capture_output=True, text=True, check=True)
+        
+        if not os.path.exists(temp_video_path):
+            raise Exception("Этап 1 не создал временное видео")
+        
+        logger.info("✅ ЭТАП 1 завершен: базовое видео создано")
+        
+        # ЭТАП 2: Накладываем субтитры на готовое видео
+        logger.info("📝 ЭТАП 2: Накладываем субтитры")
+        
+        # Генерируем ОПТИМИЗИРОВАННЫЙ фильтр субтитров
+        subtitle_filter = subtitle_system.generate_ffmpeg_filter_advanced(
+            segments, start_time, end_time, subtitle_style
+        )
+        
+        # Если фильтр слишком длинный, используем упрощенную версию
+        if len(subtitle_filter) > 8000:
+            logger.warning(f"⚠️ Фильтр слишком длинный ({len(subtitle_filter)} символов), упрощаем")
+            subtitle_filter = create_simplified_word_highlight_filter(segments, start_time, end_time, subtitle_style)
+        
+        if not subtitle_filter or len(subtitle_filter) < 10:
+            logger.warning("⚠️ Пустой фильтр субтитров, используем fallback")
+            subtitle_filter = subtitle_system.generate_fallback_filter(highlight['quote'], subtitle_style)
+        
+        logger.info(f"📝 ЭТАП 2 фильтр субтитров: {len(subtitle_filter)} символов")
+        
+        # Команда для этапа 2
+        stage2_cmd = [
+            'ffmpeg', '-i', temp_video_path,
+            '-vf', subtitle_filter,
+            '-c:v', 'libx264',
+            '-c:a', 'copy',  # Копируем аудио без перекодирования
+            '-preset', 'fast',
+            '-crf', '23',
+            '-y', output_path
+        ]
+        
+        logger.info(f"🔧 ЭТАП 2 команда: {len(' '.join(stage2_cmd))} символов")
+        
+        # Выполняем этап 2
+        result2 = subprocess.run(stage2_cmd, capture_output=True, text=True, check=True)
+        
+        # Удаляем временный файл
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            logger.info(f"✅ ДВУХЭТАПНЫЙ клип создан: {output_path}")
+            logger.info(f"📊 Размер: {file_size / 1024:.1f} KB")
+            return True
+        else:
+            logger.error("❌ Файл клипа не создан")
+            return False
+            
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Ошибка FFmpeg в двухэтапном процессе: {e}")
+        logger.error(f"FFmpeg stderr: {e.stderr}")
+        logger.error(f"FFmpeg stdout: {e.stdout}")
+        
+        # Очищаем временные файлы
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        
+        # FALLBACK: пробуем создать простой клип
+        logger.info("🚨 FALLBACK: создаем простой клип без субтитров")
+        try:
+            fallback_cmd = [
+                'ffmpeg', '-i', video_path,
+                '-ss', str(start_time),
+                '-t', str(end_time - start_time),
+                '-c:v', 'libx264', '-c:a', 'aac',
+                '-y', output_path
+            ]
+            subprocess.run(fallback_cmd, check=True, capture_output=True, text=True)
+            logger.info("🚨 FALLBACK клип создан")
+            return True
+        except:
+            logger.error("💀 ПОЛНЫЙ ПРОВАЛ - не удалось создать даже простой клип")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Общая ошибка двухэтапного создания клипа: {e}")
+        
+        # Очищаем временные файлы
+        if os.path.exists(temp_video_path):
+            os.remove(temp_video_path)
+        
+        return False
+
+def create_simplified_word_highlight_filter(segments, start_time, end_time, style='modern'):
+    """Создает упрощенный фильтр с подсветкой слов - ОПТИМИЗИРОВАННЫЙ"""
+    try:
+        logger.info("📝 Создаем упрощенный фильтр с подсветкой слов")
+        
+        # Находим сегменты для временного диапазона
+        clip_segments = subtitle_system.find_segments_for_timerange(segments, start_time, end_time)
+        
+        if not clip_segments:
+            return subtitle_system.generate_fallback_filter("No segments found", style)
+        
+        # Создаем word-level тайминги
+        word_timings = subtitle_system.create_word_level_timings(clip_segments)
+        
+        if not word_timings:
+            return subtitle_system.generate_fallback_filter("No word timings", style)
+        
+        # Ограничиваем количество слов для стабильности
+        if len(word_timings) > 30:
+            logger.warning(f"⚠️ Слишком много слов ({len(word_timings)}), ограничиваем до 30")
+            word_timings = word_timings[:30]
+        
+        style_config = subtitle_system.styles[style]
+        all_filters = []
+        
+        for word_data in word_timings:
+            # Корректируем время относительно клипа
+            word_start = max(0, word_data['start'] - start_time)
+            word_end = max(0, word_data['end'] - start_time)
+            
+            if word_end <= word_start:
+                continue
+            
+            # Очищаем текст
+            clean_text = subtitle_system.escape_for_ffmpeg(word_data['word'])
+            
+            # Создаем простой фильтр для слова
+            word_filter = (
+                f"drawtext=text='{clean_text}'"
+                f":fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                f":fontsize={style_config['font_size']}"
+                f":fontcolor={style_config['highlight_color']}"
+                f":borderw={style_config['stroke_width']}"
+                f":bordercolor={style_config['stroke_color']}"
+                f":x=(w-text_w)/2"
+                f":y=h*0.75"
+                f":enable='between(t,{word_start:.2f},{word_end:.2f})'"
+            )
+            
+            all_filters.append(word_filter)
+        
+        final_filter = ','.join(all_filters)
+        logger.info(f"✅ Упрощенный фильтр: {len(all_filters)} слов, {len(final_filter)} символов")
+        
+        return final_filter
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания упрощенного фильтра: {e}")
+        return subtitle_system.generate_fallback_filter("Simplified filter error", style)
+
 def generate_clip_with_advanced_subtitles(video_path, start_time, end_time, output_path, highlight, segments, subtitle_style="modern", animation_type="highlight", format_id="9:16"):
     """Генерирует клип с продвинутыми анимированными субтитрами"""
     try:
@@ -833,8 +1033,8 @@ async def process_clip_generation(generation_task_id: str, task_id: str, subtitl
                 clip_id = str(uuid.uuid4())
                 output_path = os.path.join(Config.CLIPS_DIR, f"{clip_id}.mp4")
                 
-                # Генерируем клип с продвинутыми субтитрами
-                success = generate_clip_with_advanced_subtitles(
+                # Генерируем клип с ДВУХЭТАПНЫМИ субтитрами - КАК В OPUS.PRO
+                success = generate_clip_with_two_stage_subtitles(
                     video_path=video_path,
                     start_time=highlight["start_time"],
                     end_time=highlight["end_time"],
@@ -906,7 +1106,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "17.7.0-with-missing-endpoints",
+              version="17.9.0-full-with-fixed-subtitles"",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -1175,8 +1375,8 @@ def process_clip_generation_v17(generation_task_id, video_id, style, format_id):
                 clip_filename = f"clip_{i+1}_{style}_{format_id.replace(':', '_')}.mp4"
                 clip_path = os.path.join(Config.CLIPS_DIR, clip_filename)
                 
-                # Создаем клип с субтитрами
-                success = generate_clip_with_advanced_subtitles(
+                # Создаем клип с ДВУХЭТАПНЫМИ субтитрами - КАК В OPUS.PRO
+                success = generate_clip_with_two_stage_subtitles(
                     video_path=video_path,
                     start_time=highlight["start_time"],
                     end_time=highlight["end_time"],
