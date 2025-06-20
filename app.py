@@ -684,37 +684,72 @@ def transcribe_audio(audio_path: str) -> Tuple[str, List[Dict]]:
         if not transcript:
             raise Exception("Не удалось получить транскрипт")
         
-        full_text = transcript.text
+        # Обрабатываем ответ как dict или объект
+        if isinstance(transcript, dict):
+            full_text = transcript.get('text', '')
+            segments = transcript.get('segments', [])
+            words = transcript.get('words', [])
+        else:
+            full_text = getattr(transcript, 'text', '')
+            segments = getattr(transcript, 'segments', [])
+            words = getattr(transcript, 'words', [])
+        
         words_data = []
         
         # Извлекаем данные о словах с таймингами
-        if hasattr(transcript, 'words') and transcript.words:
-            for word in transcript.words:
-                words_data.append({
-                    'word': word.word,
-                    'start': word.start,
-                    'end': word.end
-                })
-        elif hasattr(transcript, 'segments') and transcript.segments:
-            # Fallback для старых версий API - используем segments
+        if words:
+            # Если есть прямые words
+            for word in words:
+                if isinstance(word, dict):
+                    words_data.append({
+                        'word': word.get('word', ''),
+                        'start': word.get('start', 0),
+                        'end': word.get('end', 0)
+                    })
+                else:
+                    words_data.append({
+                        'word': getattr(word, 'word', ''),
+                        'start': getattr(word, 'start', 0),
+                        'end': getattr(word, 'end', 0)
+                    })
+        elif segments:
+            # Fallback для segments
             logger.info("📝 Используем segments вместо words")
-            for segment in transcript.segments:
-                if hasattr(segment, 'words') and segment.words:
-                    for word in segment.words:
-                        words_data.append({
-                            'word': word.word,
-                            'start': word.start,
-                            'end': word.end
-                        })
+            for segment in segments:
+                if isinstance(segment, dict):
+                    segment_words = segment.get('words', [])
+                    segment_text = segment.get('text', '')
+                    segment_start = segment.get('start', 0)
+                    segment_end = segment.get('end', 0)
+                else:
+                    segment_words = getattr(segment, 'words', [])
+                    segment_text = getattr(segment, 'text', '')
+                    segment_start = getattr(segment, 'start', 0)
+                    segment_end = getattr(segment, 'end', 0)
+                
+                if segment_words:
+                    for word in segment_words:
+                        if isinstance(word, dict):
+                            words_data.append({
+                                'word': word.get('word', ''),
+                                'start': word.get('start', 0),
+                                'end': word.get('end', 0)
+                            })
+                        else:
+                            words_data.append({
+                                'word': getattr(word, 'word', ''),
+                                'start': getattr(word, 'start', 0),
+                                'end': getattr(word, 'end', 0)
+                            })
                 else:
                     # Если нет word-level timestamps, создаем примерные
-                    segment_words = segment.text.split()
-                    word_duration = (segment.end - segment.start) / len(segment_words) if segment_words else 1.0
-                    for i, word in enumerate(segment_words):
+                    segment_words_list = segment_text.split()
+                    word_duration = (segment_end - segment_start) / len(segment_words_list) if segment_words_list else 1.0
+                    for i, word in enumerate(segment_words_list):
                         words_data.append({
                             'word': word,
-                            'start': segment.start + i * word_duration,
-                            'end': segment.start + (i + 1) * word_duration
+                            'start': segment_start + i * word_duration,
+                            'end': segment_start + (i + 1) * word_duration
                         })
         else:
             # Если совсем нет word-level данных, создаем базовую разбивку
