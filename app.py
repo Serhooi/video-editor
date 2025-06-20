@@ -187,15 +187,41 @@ class AdvancedAnimatedSubtitleSystem:
         return phrases
     
     def escape_for_ffmpeg(self, text):
-        """Экранирует текст для FFmpeg"""
-        # Экранируем специальные символы
+        """Экранирует текст для FFmpeg - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        if not text:
+            return ""
+        
+        # Убираем лишние пробелы
+        text = text.strip()
+        
+        # ПРАВИЛЬНОЕ экранирование для FFmpeg drawtext
+        # Сначала экранируем обратные слеши
+        text = text.replace("\\", "\\\\")
+        
+        # Затем экранируем одинарные кавычки (апострофы)
         text = text.replace("'", "\\'")
+        
+        # Экранируем двоеточия (только если не в начале)
         text = text.replace(":", "\\:")
+        
+        # Экранируем запятые
         text = text.replace(",", "\\,")
+        
+        # Экранируем скобки
         text = text.replace("[", "\\[")
         text = text.replace("]", "\\]")
         text = text.replace("(", "\\(")
         text = text.replace(")", "\\)")
+        
+        # Экранируем точки с запятой
+        text = text.replace(";", "\\;")
+        
+        # Убираем проблемные символы которые могут сломать команду
+        text = text.replace('"', '\\"')
+        text = text.replace('`', '\\`')
+        text = text.replace('$', '\\$')
+        
+        logger.debug(f"🔧 Экранирование: '{text[:20]}...' → '{text[:20]}...'")
         
         return text
     
@@ -1106,7 +1132,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "17.9.0-full-with-fixed-subtitles",
+            "version": "17.10.0-fixed-escaping",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
