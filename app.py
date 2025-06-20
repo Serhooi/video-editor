@@ -906,7 +906,7 @@ async def health_check():
         
         return {
             "status": "healthy",
-            "version": "17.6.0-download-fix-complete",
+            "version": "17.7.0-with-missing-endpoints",
             "timestamp": datetime.now().isoformat(),
             "active_tasks": len(active_tasks),
             "queue_size": len(task_queue),
@@ -922,6 +922,62 @@ async def health_check():
     except Exception as e:
         logger.error(f"❌ Ошибка health check: {e}")
         return {"status": "error", "error": str(e)}
+
+@app.get("/api/styles")
+async def get_styles():
+    """Возвращает доступные стили субтитров"""
+    return {
+        "styles": [
+            {
+                "id": "modern",
+                "name": "Modern",
+                "description": "Clean white text with black border"
+            },
+            {
+                "id": "neon",
+                "name": "Neon", 
+                "description": "Cyan text with magenta border"
+            },
+            {
+                "id": "fire",
+                "name": "Fire",
+                "description": "Orange text with gold border"
+            },
+            {
+                "id": "elegant",
+                "name": "Elegant",
+                "description": "Light gray text with subtle styling"
+            }
+        ]
+    }
+
+@app.get("/api/formats")
+async def get_formats():
+    """Возвращает доступные форматы видео"""
+    return {
+        "formats": [
+            {
+                "id": "9:16",
+                "name": "Vertical (9:16)",
+                "description": "TikTok, Instagram Reels, Shorts"
+            },
+            {
+                "id": "16:9", 
+                "name": "Horizontal (16:9)",
+                "description": "YouTube"
+            },
+            {
+                "id": "1:1",
+                "name": "Square (1:1)", 
+                "description": "Instagram Feed"
+            },
+            {
+                "id": "4:5",
+                "name": "Portrait (4:5)",
+                "description": "Instagram Stories"
+            }
+        ]
+    }
 
 @app.post("/api/videos/analyze")
 async def analyze_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
