@@ -1,417 +1,435 @@
-// Define overlay types enum
-export enum OverlayType {
-  TEXT = "text",
-  IMAGE = "image",
-  SHAPE = "shape",
-  VIDEO = "video",
-  SOUND = "sound",
-  CAPTION = "caption",
-  LOCAL_DIR = "local-dir",
-  STICKER = "sticker",
-  TEMPLATE = "template",
+/**
+ * TypeScript types for React Video Editor Pro v7.0.0
+ */
+
+// Base types
+export type UUID = string;
+export type Timestamp = number;
+export type Duration = number; // in seconds
+export type Position = number; // in seconds
+
+// Media types
+export interface MediaFile {
+  id: UUID;
+  name: string;
+  url: string;
+  type: 'video' | 'audio' | 'image';
+  mimeType: string;
+  size: number;
+  duration?: Duration;
+  width?: number;
+  height?: number;
+  thumbnail?: string;
+  createdAt: Timestamp;
 }
-// Base overlay properties
-type BaseOverlay = {
-  id: number;
-  durationInFrames: number;
-  from: number;
-  height: number;
-  row: number;
-  left: number;
-  top: number;
-  width: number;
-  isDragging: boolean;
-  rotation: number;
-  type: OverlayType;
-};
 
-// Base style properties
-type BaseStyles = {
-  opacity?: number;
-  zIndex?: number;
-  transform?: string;
-};
+// Timeline types
+export interface TimelineItem {
+  id: UUID;
+  type: 'video' | 'audio' | 'text' | 'image' | 'effect';
+  startTime: Position;
+  duration: Duration;
+  trackIndex: number;
+  zIndex: number;
+  locked: boolean;
+  muted: boolean;
+  visible: boolean;
+  data: any; // Specific data for each item type
+}
 
-// Base animation type
-type AnimationConfig = {
-  enter?: string;
-  exit?: string;
-};
-
-// Text overlay specific
-export type TextOverlay = BaseOverlay & {
-  type: OverlayType.TEXT;
-  content: string;
-  styles: BaseStyles & {
-    fontSize: string;
-    fontWeight: string;
-    color: string;
-    backgroundColor: string;
-    fontFamily: string;
-    fontStyle: string;
-    textDecoration: string;
-    lineHeight?: string;
-    letterSpacing?: string;
-    textAlign?: "left" | "center" | "right";
-    textShadow?: string;
-    padding?: string;
-    paddingBackgroundColor?: string;
-    borderRadius?: string;
-    boxShadow?: string;
-    background?: string;
-    WebkitBackgroundClip?: string;
-    WebkitTextFillColor?: string;
-    backdropFilter?: string;
-    border?: string;
-    animation?: AnimationConfig;
+export interface VideoTimelineItem extends TimelineItem {
+  type: 'video';
+  data: {
+    mediaFileId: UUID;
+    volume: number;
+    speed: number;
+    filters: VideoFilter[];
+    crop?: CropSettings;
+    transform?: TransformSettings;
   };
-};
+}
 
-// Shape overlay specific
-export type ShapeOverlay = BaseOverlay & {
-  type: OverlayType.SHAPE;
-  content: string;
-  styles: BaseStyles & {
-    fill?: string;
-    stroke?: string;
-    strokeWidth?: number;
-    borderRadius?: string;
-    boxShadow?: string;
-    gradient?: string;
+export interface AudioTimelineItem extends TimelineItem {
+  type: 'audio';
+  data: {
+    mediaFileId: UUID;
+    volume: number;
+    fadeIn: Duration;
+    fadeOut: Duration;
+    effects: AudioEffect[];
   };
-};
+}
 
-// Clip overlay specific
-export type ClipOverlay = BaseOverlay & {
-  type: OverlayType.VIDEO;
-  content: string;
-  src: string;
-  videoStartTime?: number;
-  speed?: number;
-  styles: BaseStyles & {
-    objectFit?: "contain" | "cover" | "fill" | "none" | "scale-down";
-    objectPosition?: string;
-    volume?: number;
-    borderRadius?: string;
-    filter?: string;
-    boxShadow?: string;
-    border?: string;
-    padding?: string;
-    paddingBackgroundColor?: string;
-    animation?: AnimationConfig; // Using shared type
+export interface TextTimelineItem extends TimelineItem {
+  type: 'text';
+  data: {
+    text: string;
+    style: TextStyle;
+    animation?: TextAnimation;
+    position: Position2D;
   };
-};
+}
 
-// Sound overlay specific
-export type SoundOverlay = BaseOverlay & {
-  type: OverlayType.SOUND;
-  content: string;
-  src: string;
-  startFromSound?: number;
-  styles: BaseStyles & {
-    volume?: number;
+export interface ImageTimelineItem extends TimelineItem {
+  type: 'image';
+  data: {
+    mediaFileId: UUID;
+    opacity: number;
+    filters: ImageFilter[];
+    transform?: TransformSettings;
+    animation?: ImageAnimation;
   };
-};
+}
 
-export type CaptionWord = {
-  word: string;
-  startMs: number;
-  endMs: number;
-  confidence: number;
-};
-
-export type Caption = {
-  text: string;
-  startMs: number;
-  endMs: number;
-  timestampMs: number | null;
-  confidence: number | null;
-  words: CaptionWord[];
-};
-
-// Update CaptionOverlay to include styling for highlighted words
-export interface CaptionStyles {
+// Style types
+export interface TextStyle {
   fontFamily: string;
-  fontSize: string;
-  lineHeight: number;
-  textAlign: "left" | "center" | "right";
+  fontSize: number;
+  fontWeight: 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
   color: string;
   backgroundColor?: string;
-  background?: string;
-  backdropFilter?: string;
-  padding?: string;
-  fontWeight?: number | string;
-  letterSpacing?: string;
+  textAlign: 'left' | 'center' | 'right';
+  textDecoration?: 'none' | 'underline' | 'line-through';
   textShadow?: string;
-  borderRadius?: string;
-  transition?: string;
-  highlightStyle?: {
-    backgroundColor?: string;
-    color?: string;
-    scale?: number;
-    fontWeight?: number;
-    textShadow?: string;
-    padding?: string;
-    borderRadius?: string;
-    transition?: string;
-    background?: string;
-    border?: string;
-    backdropFilter?: string;
-  };
+  letterSpacing?: number;
+  lineHeight?: number;
 }
 
-export interface CaptionOverlay extends BaseOverlay {
-  type: OverlayType.CAPTION;
-  captions: Caption[];
-  styles?: CaptionStyles;
-  template?: string;
+export interface Position2D {
+  x: number;
+  y: number;
 }
 
-export type StickerCategory =
-  | "Shapes"
-  | "Discounts"
-  | "Emojis"
-  | "Reviews"
-  | "Default";
+export interface Size2D {
+  width: number;
+  height: number;
+}
 
-// Sticker overlay specific
-export type StickerOverlay = BaseOverlay & {
-  type: OverlayType.STICKER;
-  content: string;
-  category: StickerCategory;
-  styles: BaseStyles & {
-    fill?: string;
-    stroke?: string;
-    strokeWidth?: number;
-    scale?: number;
-    filter?: string;
-    animation?: AnimationConfig;
-  };
-};
+export interface CropSettings {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
-export interface TemplateCreator {
+export interface TransformSettings {
+  scale: number;
+  rotation: number;
+  position: Position2D;
+  anchor: Position2D;
+}
+
+// Animation types
+export interface Animation {
+  type: string;
+  duration: Duration;
+  easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out';
+  delay?: Duration;
+  repeat?: number | 'infinite';
+}
+
+export interface TextAnimation extends Animation {
+  type: 'fade-in' | 'slide-in' | 'zoom-in' | 'typewriter' | 'bounce';
+  direction?: 'left' | 'right' | 'top' | 'bottom';
+}
+
+export interface ImageAnimation extends Animation {
+  type: 'fade-in' | 'slide-in' | 'zoom-in' | 'rotate-in' | 'flip';
+  direction?: 'left' | 'right' | 'top' | 'bottom';
+}
+
+// Filter and effect types
+export interface Filter {
   id: string;
   name: string;
+  enabled: boolean;
+  parameters: Record<string, any>;
 }
 
-export interface TemplateOverlay {
-  id: string;
-  name: string;
-  description: string;
-  createdAt: string;
-  updatedAt: string;
-  createdBy: TemplateCreator;
-  category: string;
-  tags: string[];
+export interface VideoFilter extends Filter {
+  type: 'brightness' | 'contrast' | 'saturation' | 'hue' | 'blur' | 'sharpen' | 'vintage' | 'black-white';
+}
+
+export interface ImageFilter extends Filter {
+  type: 'brightness' | 'contrast' | 'saturation' | 'hue' | 'blur' | 'sharpen' | 'vintage' | 'black-white' | 'sepia';
+}
+
+export interface AudioEffect extends Filter {
+  type: 'reverb' | 'echo' | 'chorus' | 'distortion' | 'equalizer' | 'compressor' | 'noise-reduction';
+}
+
+// Project types
+export interface VideoProject {
+  id: UUID;
+  title: string;
+  description?: string;
   thumbnail?: string;
-  duration: number;
-  aspectRatio?: AspectRatio;
-  overlays: Overlay[];
+  duration: Duration;
+  settings: ProjectSettings;
+  timeline: TimelineItem[];
+  mediaFiles: MediaFile[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  version: string;
 }
 
-export type Overlay =
-  | TextOverlay
-  | ImageOverlay
-  | ShapeOverlay
-  | ClipOverlay
-  | SoundOverlay
-  | CaptionOverlay
-  | StickerOverlay;
-
-export type MainProps = {
-  readonly overlays: Overlay[];
-  readonly setSelectedOverlay: React.Dispatch<
-    React.SetStateAction<number | null>
-  >;
-  readonly selectedOverlay: number | null;
-  readonly changeOverlay: (
-    overlayId: number,
-    updater: (overlay: Overlay) => Overlay
-  ) => void;
-};
-
-import { z } from "zod";
-
-// Base interface for all timeline items
-interface TimelineItem {
-  id: string;
-  start: number;
-  duration: number;
-  row: number;
-}
-
-// Clip specific properties
-export interface Video extends TimelineItem {
-  type: OverlayType.VIDEO;
-  src: string;
-  videoStartTime?: number;
-}
-
-// Sound specific properties
-export interface Sound extends TimelineItem {
-  type: OverlayType.SOUND;
-  file: string;
-  content: string;
-  startFromSound: number;
-}
-
-// Base interface for layers
-interface Layer extends TimelineItem {
-  position: { x: number; y: number };
-}
-
-// Text layer specific properties
-export interface TextLayer extends Layer {
-  type: OverlayType.TEXT;
-  text: string;
-  fontSize: number;
-  fontColor: string;
-  fontFamily: string;
+export interface ProjectSettings {
+  width: number;
+  height: number;
+  frameRate: number;
+  sampleRate: number;
   backgroundColor: string;
+  aspectRatio: '16:9' | '9:16' | '4:3' | '1:1' | '21:9';
+  quality: 'low' | 'medium' | 'high' | 'ultra';
 }
 
-// Shape layer specific properties
-export interface ShapeLayer extends Layer {
-  type: OverlayType.SHAPE;
-  shapeType: "rectangle" | "circle" | "triangle";
-  color: string;
-  size: { width: number; height: number };
+// Rendering types
+export interface RenderJob {
+  id: UUID;
+  projectId: UUID;
+  status: RenderStatus;
+  progress: number; // 0-100
+  settings: RenderSettings;
+  outputUrl?: string;
+  errorMessage?: string;
+  createdAt: Timestamp;
+  startedAt?: Timestamp;
+  completedAt?: Timestamp;
 }
 
-// Image layer specific properties
-export interface ImageLayer extends Layer {
-  type: OverlayType.IMAGE;
-  src: string;
-  size: { width: number; height: number };
+export type RenderStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+
+export interface RenderSettings {
+  format: 'mp4' | 'webm' | 'mov';
+  quality: 'low' | 'medium' | 'high' | 'ultra';
+  width: number;
+  height: number;
+  frameRate: number;
+  bitrate: number;
+  audioQuality: number;
 }
 
-// Union type for all possible layers
-export type LayerItem = TextLayer | ShapeLayer | ImageLayer;
-
-// Union type for all timeline items
-export type TimelineItemUnion = Video | Sound | LayerItem;
-
-// Type for the selected item in the editor
-export type SelectedItem = TimelineItemUnion | null;
-
-// Zod schema for composition props
-
-export const CompositionProps = z.object({
-  overlays: z.array(z.any()), // Replace with your actual Overlay type
-  durationInFrames: z.number(),
-  width: z.number(),
-  height: z.number(),
-  fps: z.number(),
-  src: z.string(),
-});
-
-// Other types remain the same
-export const RenderRequest = z.object({
-  id: z.string(),
-  inputProps: CompositionProps,
-});
-
-export const ProgressRequest = z.object({
-  bucketName: z.string(),
-  id: z.string(),
-});
-
-export type ProgressResponse =
-  | { type: "error"; message: string }
-  | { type: "progress"; progress: number }
-  | { type: "done"; url: string; size: number };
-
-// Additional types
-export interface PexelsMedia {
-  id: string;
-  duration?: number;
-  image?: string;
-  video_files?: { link: string }[];
+// AI Subtitles types
+export interface SubtitleSegment {
+  id: UUID;
+  startTime: Position;
+  endTime: Position;
+  text: string;
+  confidence: number;
+  speaker?: string;
 }
 
-export interface PexelsAudio {
-  id: string;
-  title: string;
-  artist: string;
-  audio_url: string;
-  duration: number;
+export interface AISubtitleJob {
+  id: UUID;
+  projectId: UUID;
+  status: AIProcessingStatus;
+  progress: number;
+  language: string;
+  style: SubtitleStyle;
+  segments: SubtitleSegment[];
+  confidence: number;
+  errorMessage?: string;
+  createdAt: Timestamp;
+  completedAt?: Timestamp;
 }
 
-export interface LocalSound {
-  id: string;
-  title: string;
-  artist: string;
-  file: string;
-  duration: number;
+export type AIProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type SubtitleStyle = 'casual' | 'formal' | 'social-media' | 'educational';
+
+export interface AISubtitleOptions {
+  language: string;
+  style: SubtitleStyle;
+  maxWordsPerSegment: number;
+  minSegmentDuration: Duration;
+  maxSegmentDuration: Duration;
+  speakerDetection: boolean;
 }
 
-export type LocalClip = {
-  id: string;
-  title: string;
-  thumbnail: string;
-  duration: number;
-  videoUrl: string;
+// User and authentication types
+export interface User {
+  id: UUID;
+  email: string;
+  name: string;
+  avatar?: string;
+  subscription: SubscriptionTier;
+  usage: UsageStats;
+  preferences: UserPreferences;
+  createdAt: Timestamp;
+}
+
+export type SubscriptionTier = 'free' | 'pro' | 'enterprise';
+
+export interface UsageStats {
+  renderMinutes: number;
+  storageUsed: number; // in bytes
+  aiMinutes: number;
+  projectsCount: number;
+  lastResetAt: Timestamp;
+}
+
+export interface UserPreferences {
+  theme: 'light' | 'dark' | 'auto';
+  language: string;
+  autoSave: boolean;
+  autoSaveInterval: number; // in seconds
+  defaultProjectSettings: ProjectSettings;
+  keyboardShortcuts: Record<string, string>;
+}
+
+// API types
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+export interface PaginatedResponse<T> extends ApiResponse<T[]> {
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface UploadResponse extends ApiResponse<MediaFile> {
+  uploadUrl?: string;
+}
+
+// Event types
+export interface TimelineEvent {
+  type: 'item-added' | 'item-removed' | 'item-moved' | 'item-resized' | 'item-selected';
+  itemId: UUID;
+  data?: any;
+}
+
+export interface PlaybackEvent {
+  type: 'play' | 'pause' | 'seek' | 'ended';
+  currentTime: Position;
+  duration: Duration;
+}
+
+export interface ProjectEvent {
+  type: 'project-loaded' | 'project-saved' | 'project-changed';
+  projectId: UUID;
+  data?: any;
+}
+
+// Component props types
+export interface TimelineProps {
+  project: VideoProject;
+  currentTime: Position;
+  zoom: number;
+  selectedItems: UUID[];
+  onItemSelect: (itemIds: UUID[]) => void;
+  onItemMove: (itemId: UUID, startTime: Position, trackIndex: number) => void;
+  onItemResize: (itemId: UUID, duration: Duration) => void;
+  onItemDelete: (itemIds: UUID[]) => void;
+  onTimeSeek: (time: Position) => void;
+}
+
+export interface MediaLibraryProps {
+  mediaFiles: MediaFile[];
+  onFileSelect: (file: MediaFile) => void;
+  onFileUpload: (files: File[]) => void;
+  onFileDelete: (fileId: UUID) => void;
+}
+
+export interface PlayerProps {
+  project: VideoProject;
+  currentTime: Position;
+  isPlaying: boolean;
+  volume: number;
+  onPlay: () => void;
+  onPause: () => void;
+  onSeek: (time: Position) => void;
+  onVolumeChange: (volume: number) => void;
+}
+
+// Utility types
+export type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
-export type AspectRatio = "16:9" | "1:1" | "4:5" | "9:16";
+export type RequiredFields<T, K extends keyof T> = T & Required<Pick<T, K>>;
 
-export interface TimelineRow {
-  id: number;
-  index: number;
+export type OptionalFields<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+// Error types
+export interface VideoEditorError extends Error {
+  code: string;
+  details?: any;
 }
 
-export interface WaveformData {
-  peaks: number[];
-  length: number;
+export interface ValidationError extends VideoEditorError {
+  field: string;
+  value: any;
 }
 
-// Update EditorContextType
-export interface EditorContextType {
-  // ... existing context properties ...
-  rows: TimelineRow[];
-  addRow: () => void;
+export interface NetworkError extends VideoEditorError {
+  status: number;
+  response?: any;
 }
 
-// Update ImageStyles interface to match ClipOverlay style pattern
-/**
- * ImageStyles interface defining all the style properties available for image overlays
- *
- * @property filter - CSS filter string applying visual effects (can use presets or custom values)
- * @property borderRadius - Border radius for rounded corners
- * @property objectFit - How the image should be resized/positioned within its container
- * @property objectPosition - Positioning of the image within its container
- * @property boxShadow - CSS box-shadow property for drop shadows
- * @property border - CSS border property for image borders
- * @property animation - Enter/exit animation configuration
- */
-export interface ImageStyles extends BaseStyles {
-  filter?: string;
-  borderRadius?: string;
-  objectFit?: "contain" | "cover" | "fill" | "none" | "scale-down";
-  objectPosition?: string;
-  boxShadow?: string;
-  border?: string;
-  padding?: string;
-  paddingBackgroundColor?: string;
-  animation?: AnimationConfig;
+// Hook types
+export interface UseTimelineReturn {
+  items: TimelineItem[];
+  selectedItems: UUID[];
+  currentTime: Position;
+  duration: Duration;
+  zoom: number;
+  addItem: (item: Omit<TimelineItem, 'id'>) => void;
+  removeItem: (itemId: UUID) => void;
+  updateItem: (itemId: UUID, updates: Partial<TimelineItem>) => void;
+  selectItems: (itemIds: UUID[]) => void;
+  setCurrentTime: (time: Position) => void;
+  setZoom: (zoom: number) => void;
 }
 
-// Update ImageOverlay to match ClipOverlay pattern
-export interface ImageOverlay extends BaseOverlay {
-  type: OverlayType.IMAGE;
-  src: string;
-  content?: string; // Optional thumbnail/preview
-  styles: ImageStyles;
+export interface UseProjectReturn {
+  project: VideoProject | null;
+  loading: boolean;
+  error: string | null;
+  createProject: (title: string, settings?: Partial<ProjectSettings>) => Promise<VideoProject>;
+  loadProject: (projectId: UUID) => Promise<void>;
+  saveProject: (updates?: Partial<VideoProject>) => Promise<void>;
+  deleteProject: (projectId: UUID) => Promise<void>;
 }
 
-// Local media file interface
-export interface LocalMediaFile {
-  id: string;
-  name: string;
-  type: "video" | "image" | "audio";
-  path: string;
-  size: number;
-  lastModified: number;
-  thumbnail?: string;
-  duration?: number;
+export interface UseMediaReturn {
+  mediaFiles: MediaFile[];
+  loading: boolean;
+  error: string | null;
+  uploadFile: (file: File) => Promise<MediaFile>;
+  deleteFile: (fileId: UUID) => Promise<void>;
+  getFileUrl: (fileId: UUID) => string;
 }
+
+// Configuration types
+export interface EditorConfig {
+  features: {
+    aiSubtitles: boolean;
+    videoEffects: boolean;
+    audioEffects: boolean;
+    collaboration: boolean;
+    cloudStorage: boolean;
+  };
+  limits: {
+    maxProjectDuration: Duration;
+    maxFileSize: number;
+    maxProjects: number;
+    maxRenderJobs: number;
+  };
+  api: {
+    baseUrl: string;
+    timeout: number;
+    retries: number;
+  };
+  storage: {
+    provider: 'local' | 'aws' | 'gcp' | 'azure';
+    bucket?: string;
+    region?: string;
+  };
+}
+

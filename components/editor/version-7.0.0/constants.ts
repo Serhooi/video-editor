@@ -1,340 +1,303 @@
-import { Overlay, OverlayType } from "./types";
-
-// Default and maximum number of rows to display in the editor
-export const INITIAL_ROWS = 5;
-export const MAX_ROWS = 8;
-// Frames per second for video rendering
-export const FPS = 30;
-
-// Name of the component being tested/rendered
-export const COMP_NAME = "TestComponent";
-
-// Video configuration
-export const DURATION_IN_FRAMES = 30;
-export const VIDEO_WIDTH = 1280; // 720p HD video dimensions
-export const VIDEO_HEIGHT = 720;
-
-// UI configuration
-export const ROW_HEIGHT = 44; // Slightly increased from 48
-export const SHOW_LOADING_PROJECT_ALERT = true; // Controls visibility of asset loading indicator
-export const DISABLE_MOBILE_LAYOUT = false;
-
 /**
- * This constant disables video keyframe extraction in the browser. Enable this if you're working with
- * multiple videos or large video files to improve performance. Keyframe extraction is CPU-intensive and can
- * cause browser lag. For production use, consider moving keyframe extraction to the server side.
- * Future versions of Remotion may provide more efficient keyframe handling.
+ * Constants for React Video Editor Pro v7.0.0
  */
-export const DISABLE_VIDEO_KEYFRAMES = false;
 
-// AWS deployment configuration
-export const SITE_NAME = "sams-site";
-export const LAMBDA_FUNCTION_NAME =
-  "remotion-render-4-0-272-mem2048mb-disk2048mb-120sec";
-export const REGION = "us-east-1";
-
-// Zoom control configuration
-export const ZOOM_CONSTRAINTS = {
-  min: 0.2, // Minimum zoom level
-  max: 10, // Maximum zoom level
-  step: 0.1, // Smallest increment for manual zoom controls
-  default: 1, // Default zoom level
-  zoomStep: 0.15, // Zoom increment for zoom in/out buttons
-  wheelStep: 0.3, // Zoom increment for mouse wheel
-  transitionDuration: 100, // Animation duration in milliseconds
-  easing: "cubic-bezier(0.4, 0.0, 0.2, 1)", // Smooth easing function for zoom transitions
+// Video rendering constants
+export const VIDEO_CONSTANTS = {
+  // Supported video formats
+  SUPPORTED_VIDEO_FORMATS: [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'video/x-msvideo', // .avi
+  ],
+  
+  // Supported audio formats
+  SUPPORTED_AUDIO_FORMATS: [
+    'audio/mp3',
+    'audio/wav',
+    'audio/ogg',
+    'audio/aac',
+    'audio/m4a',
+  ],
+  
+  // Supported image formats
+  SUPPORTED_IMAGE_FORMATS: [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/svg+xml',
+  ],
+  
+  // Video quality presets
+  QUALITY_PRESETS: {
+    LOW: { width: 640, height: 360, bitrate: 500 },
+    MEDIUM: { width: 1280, height: 720, bitrate: 1500 },
+    HIGH: { width: 1920, height: 1080, bitrate: 3000 },
+    ULTRA: { width: 3840, height: 2160, bitrate: 8000 },
+  },
+  
+  // Frame rates
+  FRAME_RATES: [24, 25, 30, 50, 60],
+  
+  // Max file sizes (in bytes)
+  MAX_FILE_SIZES: {
+    VIDEO: 500 * 1024 * 1024, // 500MB
+    AUDIO: 50 * 1024 * 1024,  // 50MB
+    IMAGE: 10 * 1024 * 1024,  // 10MB
+  },
+  
+  // Video duration limits (in seconds)
+  MAX_DURATION: 600, // 10 minutes
+  MIN_DURATION: 1,   // 1 second
 };
 
-// Timeline Snapping configuration
-export const SNAPPING_CONFIG = {
-  thresholdFrames: 1, // Default snapping sensitivity in frames
-  enableVerticalSnapping: true, // Enable snapping to items in adjacent rows
+// Timeline constants
+export const TIMELINE_CONSTANTS = {
+  // Zoom levels
+  ZOOM_LEVELS: [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5],
+  DEFAULT_ZOOM: 1,
+  
+  // Grid settings
+  GRID_SIZE: 10,
+  SNAP_THRESHOLD: 5,
+  
+  // Track heights
+  TRACK_HEIGHTS: {
+    VIDEO: 80,
+    AUDIO: 60,
+    TEXT: 40,
+    IMAGE: 60,
+  },
+  
+  // Timeline settings
+  PIXELS_PER_SECOND: 100,
+  MIN_CLIP_DURATION: 0.1, // 100ms
+  
+  // Playhead
+  PLAYHEAD_WIDTH: 2,
+  PLAYHEAD_COLOR: '#ff0000',
 };
 
-// Add new constant for push behavior
-export const ENABLE_PUSH_ON_DRAG = false; // Set to false to disable pushing items on drag
+// Rendering constants
+export const RENDER_CONSTANTS = {
+  // Render statuses
+  STATUS: {
+    PENDING: 'pending',
+    PROCESSING: 'processing',
+    COMPLETED: 'completed',
+    FAILED: 'failed',
+    CANCELLED: 'cancelled',
+  },
+  
+  // Render priorities
+  PRIORITY: {
+    LOW: 1,
+    NORMAL: 2,
+    HIGH: 3,
+    URGENT: 4,
+  },
+  
+  // Render formats
+  OUTPUT_FORMATS: {
+    MP4: 'mp4',
+    WEBM: 'webm',
+    MOV: 'mov',
+  },
+  
+  // Progress update intervals
+  PROGRESS_UPDATE_INTERVAL: 1000, // 1 second
+  
+  // Timeout settings
+  RENDER_TIMEOUT: 30 * 60 * 1000, // 30 minutes
+  PROGRESS_TIMEOUT: 5 * 60 * 1000, // 5 minutes
+};
 
-// Render configuration
-// NOTE: TO CHANGE RENDER TYPE, UPDATE THE RENDER_TYPE CONSTANT
-export const RENDER_TYPE: "ssr" | "lambda" = "lambda";
+// AI Subtitles constants
+export const AI_CONSTANTS = {
+  // Supported languages for Whisper
+  SUPPORTED_LANGUAGES: {
+    'auto': 'Auto-detect',
+    'en': 'English',
+    'ru': 'Russian',
+    'es': 'Spanish',
+    'fr': 'French',
+    'de': 'German',
+    'it': 'Italian',
+    'pt': 'Portuguese',
+    'zh': 'Chinese',
+    'ja': 'Japanese',
+    'ko': 'Korean',
+  },
+  
+  // Subtitle styles
+  SUBTITLE_STYLES: {
+    CASUAL: 'casual',
+    FORMAL: 'formal',
+    SOCIAL_MEDIA: 'social-media',
+    EDUCATIONAL: 'educational',
+  },
+  
+  // Whisper model settings
+  WHISPER_MODELS: {
+    TINY: 'whisper-1',
+    BASE: 'whisper-1',
+    SMALL: 'whisper-1',
+    MEDIUM: 'whisper-1',
+    LARGE: 'whisper-1',
+  },
+  
+  // Processing limits
+  MAX_AUDIO_DURATION: 25 * 60, // 25 minutes (Whisper limit)
+  MAX_WORDS_PER_SEGMENT: 12,
+  MIN_WORDS_PER_SEGMENT: 3,
+  
+  // Confidence thresholds
+  MIN_CONFIDENCE: 0.7,
+  HIGH_CONFIDENCE: 0.9,
+};
 
-// Autosave configuration
-export const AUTO_SAVE_INTERVAL = 10000; // Autosave every 10 seconds
+// UI Constants
+export const UI_CONSTANTS = {
+  // Animation durations
+  ANIMATION_DURATION: {
+    FAST: 150,
+    NORMAL: 300,
+    SLOW: 500,
+  },
+  
+  // Breakpoints
+  BREAKPOINTS: {
+    SM: 640,
+    MD: 768,
+    LG: 1024,
+    XL: 1280,
+    '2XL': 1536,
+  },
+  
+  // Z-index layers
+  Z_INDEX: {
+    DROPDOWN: 1000,
+    MODAL: 1050,
+    TOOLTIP: 1100,
+    NOTIFICATION: 1200,
+  },
+  
+  // Colors
+  COLORS: {
+    PRIMARY: '#3b82f6',
+    SECONDARY: '#64748b',
+    SUCCESS: '#10b981',
+    WARNING: '#f59e0b',
+    ERROR: '#ef4444',
+    INFO: '#06b6d4',
+  },
+};
 
-export const DEFAULT_OVERLAYS: Overlay[] = [
-  {
-    left: 0,
-    top: 0,
-    width: 1280,
-    height: 720,
-    durationInFrames: 61,
-    from: 0,
-    id: 791325,
-    rotation: 0,
-    row: 3,
-    isDragging: false,
-    type: OverlayType.VIDEO,
-    content:
-      "https://images.pexels.com/videos/2821900/free-video-2821900.jpg?auto=compress&cs=tinysrgb&fit=crop&h=630&w=1200",
-    src: "https://videos.pexels.com/video-files/2821900/2821900-hd_1280_720_25fps.mp4",
-    videoStartTime: 0,
-    styles: {
-      opacity: 1,
-      zIndex: 100,
-      transform: "none",
-      objectFit: "cover",
-      padding: "50px",
-      paddingBackgroundColor: "#ffffff",
-      filter:
-        "contrast(130%) sepia(45%) brightness(85%) saturate(160%) hue-rotate(5deg)",
-    },
+// API Constants
+export const API_CONSTANTS = {
+  // Rate limiting
+  RATE_LIMITS: {
+    RENDER: { requests: 5, window: 60 * 1000 }, // 5 requests per minute
+    UPLOAD: { requests: 10, window: 60 * 1000 }, // 10 uploads per minute
+    AI_SUBTITLES: { requests: 3, window: 60 * 1000 }, // 3 AI requests per minute
   },
-  {
-    left: 24,
-    top: 127,
-    width: 1195,
-    height: 444,
-    durationInFrames: 47,
-    from: 9,
-    id: 407242,
-    row: 1,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "MAKE",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgba(255, 169, 2, 1)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
+  
+  // Request timeouts
+  TIMEOUTS: {
+    UPLOAD: 5 * 60 * 1000, // 5 minutes
+    RENDER: 30 * 60 * 1000, // 30 minutes
+    AI_PROCESSING: 10 * 60 * 1000, // 10 minutes
   },
-  {
-    left: 38,
-    top: 141,
-    width: 1195,
-    height: 444,
-    durationInFrames: 48,
-    from: 9,
-    id: 162812,
-    row: 2,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "MAKE",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgb(24, 23, 22)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
+  
+  // Response codes
+  HTTP_STATUS: {
+    OK: 200,
+    CREATED: 201,
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
+    NOT_FOUND: 404,
+    CONFLICT: 409,
+    UNPROCESSABLE_ENTITY: 422,
+    TOO_MANY_REQUESTS: 429,
+    INTERNAL_SERVER_ERROR: 500,
+    SERVICE_UNAVAILABLE: 503,
   },
-  {
-    left: 0,
-    top: 0,
-    width: 1280,
-    height: 720,
-    durationInFrames: 52,
-    from: 57,
-    id: 634772,
-    rotation: 0,
-    row: 2,
-    isDragging: false,
-    type: OverlayType.VIDEO,
-    content:
-      "https://images.pexels.com/videos/7778850/pexels-photo-7778850.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=630&w=1200",
-    src: "https://videos.pexels.com/video-files/7778850/7778850-uhd_2732_1440_25fps.mp4",
-    videoStartTime: 0,
-    styles: {
-      opacity: 1,
-      zIndex: 100,
-      transform: "none",
-      objectFit: "cover",
-      filter:
-        "contrast(130%) sepia(45%) brightness(85%) saturate(160%) hue-rotate(5deg)",
-      padding: "50px",
-      paddingBackgroundColor: "#ffffff",
-    },
+};
+
+// Storage constants
+export const STORAGE_CONSTANTS = {
+  // Local storage keys
+  KEYS: {
+    PROJECT_DATA: 'video_editor_project',
+    USER_PREFERENCES: 'video_editor_preferences',
+    RECENT_PROJECTS: 'video_editor_recent',
+    AUTOSAVE_DATA: 'video_editor_autosave',
   },
-  {
-    left: 24,
-    top: 127,
-    width: 1195,
-    height: 444,
-    durationInFrames: 40,
-    from: 62,
-    id: 957241,
-    row: 0,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "GREAT",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgba(255, 169, 2, 1)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
+  
+  // Cache settings
+  CACHE_DURATION: {
+    SHORT: 5 * 60 * 1000, // 5 minutes
+    MEDIUM: 30 * 60 * 1000, // 30 minutes
+    LONG: 24 * 60 * 60 * 1000, // 24 hours
   },
-  {
-    left: 38,
-    top: 141,
-    width: 1195,
-    height: 444,
-    durationInFrames: 41,
-    from: 62,
-    id: 671754,
-    row: 1,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "GREAT",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgb(24, 23, 22)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
+  
+  // Storage limits
+  MAX_STORAGE_SIZE: 50 * 1024 * 1024, // 50MB for IndexedDB
+  MAX_PROJECTS: 100,
+};
+
+// Feature flags
+export const FEATURE_FLAGS = {
+  AI_SUBTITLES: true,
+  VIDEO_EFFECTS: true,
+  AUDIO_EFFECTS: true,
+  COLLABORATION: false,
+  CLOUD_STORAGE: false,
+  LIVE_STREAMING: false,
+  ADVANCED_ANALYTICS: false,
+};
+
+// Version info
+export const VERSION_INFO = {
+  VERSION: '7.0.0',
+  BUILD_DATE: '2024-01-01',
+  API_VERSION: 'v1',
+  MINIMUM_BROWSER_VERSION: {
+    CHROME: 90,
+    FIREFOX: 88,
+    SAFARI: 14,
+    EDGE: 90,
   },
-  {
-    left: 0,
-    top: 0,
-    width: 1280,
-    height: 720,
-    durationInFrames: 54,
-    from: 101,
-    id: 949039,
-    rotation: 0,
-    row: 3,
-    isDragging: false,
-    type: OverlayType.VIDEO,
-    content:
-      "https://images.pexels.com/videos/3044090/free-video-3044090.jpg?auto=compress&cs=tinysrgb&fit=crop&h=630&w=1200",
-    src: "https://videos.pexels.com/video-files/3044090/3044090-uhd_2560_1440_24fps.mp4",
-    videoStartTime: 0,
-    styles: {
-      opacity: 1,
-      padding: "50px",
-      paddingBackgroundColor: "#ffffff",
-      zIndex: 100,
-      transform: "none",
-      objectFit: "cover",
-      filter:
-        "contrast(130%) sepia(45%) brightness(85%) saturate(160%) hue-rotate(5deg)",
-    },
-  },
-  {
-    left: 24,
-    top: 127,
-    width: 1195,
-    height: 444,
-    durationInFrames: 47,
-    from: 108,
-    id: 947381,
-    row: 0,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "VIDEOS",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgba(255, 169, 2, 1)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      padding: "50px",
-      paddingBackgroundColor: "#ffffff",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
-  },
-  {
-    left: 38,
-    top: 141,
-    width: 1195,
-    height: 444,
-    durationInFrames: 47,
-    from: 108,
-    id: 286216,
-    row: 1,
-    rotation: 0,
-    isDragging: false,
-    type: OverlayType.TEXT,
-    content: "VIDEOS",
-    styles: {
-      fontSize: "3rem",
-      fontWeight: "700",
-      color: "rgb(24, 23, 22)",
-      backgroundColor: "",
-      fontFamily: "font-league-spartan",
-      fontStyle: "normal",
-      textDecoration: "none",
-      lineHeight: "1.1",
-      textAlign: "center",
-      letterSpacing: "-0.03em",
-      opacity: 1,
-      zIndex: 1,
-      transform: "none",
-    },
-  },
-  {
-    id: 957242,
-    type: OverlayType.SOUND,
-    content: "Another Lowfi",
-    src: "https://rwxrdxvxndclnqvznxfj.supabase.co/storage/v1/object/public/sounds/sound-3.mp3?t=2024-11-04T03%3A52%3A35.101Z",
-    from: 0,
-    row: 4,
-    left: 0,
-    top: 0,
-    width: 1920,
-    height: 100,
-    rotation: 0,
-    isDragging: false,
-    durationInFrames: 156,
-    styles: {
-      opacity: 1,
-    },
-  },
-];
+};
+
+// Error messages
+export const ERROR_MESSAGES = {
+  GENERIC: 'An unexpected error occurred',
+  NETWORK: 'Network connection error',
+  FILE_TOO_LARGE: 'File size exceeds the maximum limit',
+  UNSUPPORTED_FORMAT: 'File format is not supported',
+  INVALID_DURATION: 'Video duration is invalid',
+  RENDER_FAILED: 'Video rendering failed',
+  AI_PROCESSING_FAILED: 'AI processing failed',
+  QUOTA_EXCEEDED: 'Usage quota exceeded',
+  UNAUTHORIZED: 'You are not authorized to perform this action',
+  PROJECT_NOT_FOUND: 'Project not found',
+  INVALID_PROJECT_DATA: 'Invalid project data',
+};
+
+// Success messages
+export const SUCCESS_MESSAGES = {
+  PROJECT_SAVED: 'Project saved successfully',
+  PROJECT_CREATED: 'Project created successfully',
+  PROJECT_DELETED: 'Project deleted successfully',
+  FILE_UPLOADED: 'File uploaded successfully',
+  RENDER_STARTED: 'Video rendering started',
+  RENDER_COMPLETED: 'Video rendered successfully',
+  AI_SUBTITLES_GENERATED: 'AI subtitles generated successfully',
+  SETTINGS_UPDATED: 'Settings updated successfully',
+};
+
