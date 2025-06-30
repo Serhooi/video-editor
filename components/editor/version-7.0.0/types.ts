@@ -433,3 +433,93 @@ export interface EditorConfig {
   };
 }
 
+
+// Lambda API types
+export interface RenderRequest {
+  id: string;
+  inputProps: Record<string, any>;
+  composition: string;
+  codec?: 'h264' | 'h265' | 'vp8' | 'vp9';
+  crf?: number;
+  envVariables?: Record<string, string>;
+  frameRange?: [number, number];
+  framesPerLambda?: number;
+  imageFormat?: 'jpeg' | 'png';
+  jpegQuality?: number;
+  maxRetries?: number;
+  privacy?: 'public' | 'private';
+  proResProfile?: string;
+  scale?: number;
+  timeoutInMilliseconds?: number;
+  audioBitrate?: string;
+  videoBitrate?: string;
+  webhook?: {
+    url: string;
+    secret?: string;
+  };
+}
+
+export interface ProgressRequest {
+  bucketName: string;
+  id: string;
+  region: string;
+  functionName: string;
+}
+
+export interface ProgressResponse {
+  type: 'error' | 'done' | 'progress';
+  message?: string;
+  progress?: number;
+  outputUrl?: string;
+  outputSize?: number;
+  renderMetadata?: {
+    startedDate: number;
+    totalChunks: number;
+    estimatedTotalLambdaInvokations: number;
+    estimatedRenderLambdaInvokations: number;
+    renderId: string;
+    bucket: string;
+    outputKey?: string;
+    outKey?: string;
+    timeToFinish?: number;
+    costs?: {
+      currency: string;
+      disclaimer: string;
+      estimatedCost: number;
+      estimatedDisplayCost: string;
+    };
+  };
+  fatalErrorEncountered?: boolean;
+  currentTime?: number;
+  renderSize?: number;
+}
+
+export interface LambdaRenderResponse {
+  type: 'success' | 'error';
+  renderId?: string;
+  bucketName?: string;
+  message?: string;
+  error?: string;
+}
+
+// Remotion composition types
+export interface RemotionComposition {
+  id: string;
+  width: number;
+  height: number;
+  fps: number;
+  durationInFrames: number;
+  defaultProps?: Record<string, any>;
+}
+
+export interface RemotionInputProps {
+  title?: string;
+  subtitle?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  timeline?: TimelineItem[];
+  mediaFiles?: MediaFile[];
+  settings?: ProjectSettings;
+  [key: string]: any;
+}
+

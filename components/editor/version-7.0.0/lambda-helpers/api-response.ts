@@ -183,3 +183,32 @@ export const createRateLimiter = (maxRequests: number, windowMs: number) => {
   };
 };
 
+
+
+/**
+ * Execute API function with error handling
+ * Used by Lambda API routes
+ */
+export const executeApi = async <T>(
+  handler: () => Promise<T>
+): Promise<Response> => {
+  try {
+    const result = await handler();
+    return new Response(JSON.stringify(createSuccessResponse(result)), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+  } catch (error) {
+    console.error('API Error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify(createErrorResponse(errorMessage)), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+  }
+};
+

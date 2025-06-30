@@ -301,3 +301,19 @@ export const SUCCESS_MESSAGES = {
   SETTINGS_UPDATED: 'Settings updated successfully',
 };
 
+
+// Lambda constants for Remotion rendering
+export const LAMBDA_FUNCTION_NAME = process.env.REMOTION_LAMBDA_FUNCTION_NAME || 'remotion-render';
+export const REGION = (process.env.REMOTION_AWS_REGION || 'us-east-1') as any;
+export const SITE_NAME = process.env.REMOTION_SITE_NAME || 'video-editor-site';
+
+// Lambda configuration
+export const LAMBDA_CONFIG = {
+  FUNCTION_NAME: LAMBDA_FUNCTION_NAME,
+  FRAMES_PER_LAMBDA: 100,
+  MAX_RETRIES: 2,
+  CODEC: 'h264' as const,
+  TIMEOUT: 900, // 15 minutes
+  MEMORY_SIZE: 3008, // MB
+} as const;
+
