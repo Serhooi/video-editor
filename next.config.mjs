@@ -1,3 +1,5 @@
+import path from 'path';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -10,7 +12,6 @@ const nextConfig = {
         // Darwin (macOS)
         "@remotion/compositor-darwin-x64": false,
         "@remotion/compositor-darwin-arm64": false,
-
         // Linux
         "@remotion/compositor-linux-x64": false,
         "@remotion/compositor-linux-arm64": false,
@@ -18,29 +19,25 @@ const nextConfig = {
         "@remotion/compositor-linux-arm64-musl": false,
         "@remotion/compositor-linux-x64-gnu": false,
         "@remotion/compositor-linux-arm64-gnu": false,
-
         // Windows
         "@remotion/compositor-win32-x64": false,
         "@remotion/compositor-windows-x64": false,
-
         // Handle esbuild
         esbuild: false,
       },
       // Add explicit path aliases for Docker build
       alias: {
         ...config.resolve?.alias,
-        '@/lib': require('path').resolve(__dirname, './lib'),
-        '@/components': require('path').resolve(__dirname, './components'),
-        '@/app': require('path').resolve(__dirname, './app'),
-        '@/public': require('path').resolve(__dirname, './public'),
+        '@/lib': path.resolve(__dirname, './lib'),
+        '@/components': path.resolve(__dirname, './components'),
+        '@/app': path.resolve(__dirname, './app'),
+        '@/public': path.resolve(__dirname, './public'),
       }
     };
-
     // Add esbuild to external modules
     if (isServer) {
       config.externals = [...config.externals, "esbuild"];
     }
-
     return config;
   },
   experimental: {
@@ -51,5 +48,5 @@ const nextConfig = {
     ],
   },
 };
-
 export default nextConfig;
+
