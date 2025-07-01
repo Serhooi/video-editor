@@ -37,10 +37,10 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   
   const [steps, setSteps] = useState<GenerationStep[]>([
-    { id: 'extract', name: 'Извлечение аудио из видео', status: 'pending', progress: 0 },
-    { id: 'transcribe', name: 'Распознавание речи (Whisper AI)', status: 'pending', progress: 0 },
-    { id: 'enhance', name: 'Обработка текста (ChatGPT)', status: 'pending', progress: 0 },
-    { id: 'format', name: 'Форматирование субтитров', status: 'pending', progress: 0 },
+    { id: 'extract', name: 'Extracting audio from video', status: 'pending', progress: 0 },
+    { id: 'transcribe', name: 'Speech recognition (Whisper AI)', status: 'pending', progress: 0 },
+    { id: 'enhance', name: 'Text processing (ChatGPT)', status: 'pending', progress: 0 },
+    { id: 'format', name: 'Formatting subtitles', status: 'pending', progress: 0 },
   ]);
 
   const updateStep = (stepId: string, status: GenerationStep['status'], progress: number = 0) => {
@@ -55,7 +55,7 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
       setUploadedFile(file);
       setError(null);
     } else {
-      setError('Пожалуйста, выберите видео или аудио файл');
+      setError('Please select a video or audio file');
     }
   };
 
@@ -63,12 +63,12 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
     const fileToProcess = uploadedFile || videoFile;
     
     if (!fileToProcess) {
-      setError('Пожалуйста, выберите видео файл');
+      setError('Please select a video file');
       return;
     }
 
     if (!apiKey.trim()) {
-      setError('API ключ не настроен. Обратитесь к администратору.');
+      setError('API key not configured. Please contact administrator.');
       return;
     }
 
@@ -171,14 +171,14 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wand2 className="h-5 w-5" />
-          Автоматические субтитры с ИИ
+          AI-Powered Subtitles
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* File Upload */}
         {!videoFile && (
           <div className="space-y-2">
-            <Label htmlFor="videoFile">Видео файл</Label>
+            <Label htmlFor="videoFile">Video File</Label>
             <div className="flex items-center gap-2">
               <Input
                 id="videoFile"
@@ -191,79 +191,43 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
             </div>
             {uploadedFile && (
               <p className="text-sm text-green-600">
-                Выбран файл: {uploadedFile.name}
+                Selected file: {uploadedFile.name}
               </p>
             )}
           </div>
         )}
 
         {/* Settings */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="language">Язык</Label>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Автоопределение</SelectItem>
-                <SelectItem value="ru">Русский</SelectItem>
-                <SelectItem value="en">English</SelectItem>
-                <SelectItem value="es">Español</SelectItem>
-                <SelectItem value="fr">Français</SelectItem>
-                <SelectItem value="de">Deutsch</SelectItem>
-              </SelectContent>
-            </Select>
+        {/* Simple Generate Button */}
+        <div className="space-y-4">
+          <div className="text-center">
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              Generate Subtitles Automatically
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              AI will automatically transcribe your video and create perfectly timed subtitles
+            </p>
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="style">Стиль</Label>
-            <Select value={style} onValueChange={(value: any) => setStyle(value)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="casual">Разговорный</SelectItem>
-                <SelectItem value="formal">Официальный</SelectItem>
-                <SelectItem value="social-media">Соцсети</SelectItem>
-                <SelectItem value="educational">Обучающий</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="maxWords">Слов в сегменте</Label>
-            <Input
-              id="maxWords"
-              type="number"
-              min="3"
-              max="15"
-              value={maxWords}
-              onChange={(e) => setMaxWords(parseInt(e.target.value) || 8)}
-            />
-          </div>
+          
+          <Button
+            onClick={handleGenerate}
+            disabled={isGenerating || !apiKey.trim() || (!videoFile && !uploadedFile)}
+            className="w-full h-12 text-base font-medium"
+            size="lg"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Generating Subtitles...
+              </>
+            ) : (
+              <>
+                <Wand2 className="mr-2 h-5 w-5" />
+                Generate AI Subtitles
+              </>
+            )}
+          </Button>
         </div>
-
-        {/* Generate Button */}
-        <Button
-          onClick={handleGenerate}
-          disabled={isGenerating || !apiKey.trim() || (!videoFile && !uploadedFile)}
-          className="w-full"
-          size="lg"
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Генерация субтитров...
-            </>
-          ) : (
-            <>
-              <Wand2 className="mr-2 h-4 w-4" />
-              Сгенерировать субтитры
-            </>
-          )}
-        </Button>
-
         {/* Progress Steps */}
         {isGenerating && (
           <div className="space-y-3">
