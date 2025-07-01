@@ -591,6 +591,15 @@ export interface Caption {
   startTime: number;
   endTime: number;
   style?: CaptionStyle;
+  words?: CaptionWord[];
+}
+
+export interface CaptionWord {
+  text: string;
+  startTime: number;
+  endTime: number;
+  startMs: number;
+  endMs: number;
 }
 
 export interface CaptionStyle {
@@ -605,5 +614,25 @@ export interface CaptionStyle {
 export interface CaptionOverlay extends Overlay {
   type: OverlayType.CAPTION;
   captions?: Caption[];
+}
+
+
+export interface CaptionStyles {
+  fontFamily?: string;
+  fontSize?: string;
+  lineHeight?: number;
+  textAlign?: 'left' | 'center' | 'right';
+  color?: string;
+  textShadow?: string;
+  padding?: string;
+  highlightStyle?: {
+    backgroundColor?: string;
+    scale?: number;
+    fontWeight?: number;
+    textShadow?: string;
+    color?: string;
+    padding?: string;
+    borderRadius?: string;
+  };
 }
 

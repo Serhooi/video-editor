@@ -43,13 +43,13 @@ export const CaptionLayerContent: React.FC<CaptionLayerContentProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const frameMs = (frame / 30) * 1000;
-  const styles = overlay.styles || defaultCaptionStyles;
+  const styles = defaultCaptionStyles;
 
   /**
    * Finds the current caption based on the frame timestamp
    */
-  const currentCaption = overlay.captions.find(
-    (caption) => frameMs >= caption.startMs && frameMs <= caption.endMs
+  const currentCaption = overlay.captions?.find(
+    (caption) => frameMs >= caption.startTime && frameMs <= caption.endTime
   );
 
   if (!currentCaption) return null;
@@ -70,7 +70,7 @@ export const CaptionLayerContent: React.FC<CaptionLayerContentProps> = ({
 
       return (
         <span
-          key={`${word.word}-${index}`}
+          key={`${word.text}-${index}`}
           className="inline-block transition-all duration-200"
           style={{
             color: isHighlighted ? highlightStyle?.color : styles.color,
@@ -97,7 +97,7 @@ export const CaptionLayerContent: React.FC<CaptionLayerContentProps> = ({
             margin: "0 2px",
           }}
         >
-          {word.word}
+          {word.text}
         </span>
       );
     });

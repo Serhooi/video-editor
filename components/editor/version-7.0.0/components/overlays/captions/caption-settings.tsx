@@ -1,5 +1,5 @@
 import React from "react";
-import { CaptionOverlay, CaptionStyles, Caption } from "../../../types";
+import { CaptionOverlay, CaptionStyle, Caption, CaptionStyles } from "../../../types";
 
 import { AlignLeft, PaintBucket, Mic } from "lucide-react";
 
