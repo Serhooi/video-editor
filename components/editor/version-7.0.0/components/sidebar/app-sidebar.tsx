@@ -176,19 +176,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* First sidebar */}
       <Sidebar
         collapsible="none"
-        className="!w-[calc(var(--sidebar-width-icon)_+_1px)] bg-background border-r"
+        className="!w-[80px] bg-background border-r"
       >
         <SidebarHeader className="">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" asChild className="md:h-8 md:py-4">
                 <a href="#">
-                  <div className="flex aspect-square size-9 items-center justify-center rounded-lg">
+                  <div className="flex aspect-square size-10 items-center justify-center rounded-lg">
                     <Image
                       src="/icons/logo-new.png"
                       alt="Logo"
-                      width={27}
-                      height={27}
+                      width={32}
+                      height={32}
+                      className="filter dark:invert object-contain"
                     />
                   </div>
                 </a>
@@ -208,17 +209,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         setIsOpen(true);
                       }}
                       size="lg"
-                      className={`flex flex-col items-center gap-2 px-2 py-3 min-h-[60px] ${
+                      className={`flex flex-col items-center gap-2 px-3 py-4 min-h-[70px] w-full ${
                         activePanel === item.panel
                           ? "bg-primary/10 text-primary hover:bg-primary/10"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       }`}
                     >
                       <item.icon
-                        className="h-5 w-5 text-gray-700 dark:text-white font-light"
+                        className="h-6 w-6 text-gray-700 dark:text-white font-light"
                         strokeWidth={1.25}
                       />
-                      <span className="text-[10px] font-medium leading-tight">
+                      <span className="text-[11px] font-medium leading-tight text-center">
                         {item.title}
                       </span>
                     </SidebarMenuButton>
@@ -234,16 +235,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             ))}
           </SidebarGroup>
         </SidebarContent>
-        <SidebarFooter className="border-t ">
+        <SidebarFooter className="border-t">
           <SidebarMenu>
-            <div className="flex items-center justify-between">
-              <SidebarMenuButton
-                asChild
-                className="text-xs text-foreground hover:text-muted-foreground transition-colors"
-              >
-                <Link href="/">V7</Link>
-              </SidebarMenuButton>
-            </div>
+            {/* Footer content removed */}
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>

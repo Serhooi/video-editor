@@ -11,7 +11,7 @@ export default function Navbar() {
           <Link href="https://www.reactvideoeditor.com/" className="flex items-center space-x-3 rtl:space-x-reverse">
             <img
               src="/icons/logo-new.png"
-              className="h-9"
+              className="h-12 w-12 object-contain filter dark:invert"
               alt="Video Editor Logo"
             />
             <span className="self-center text-xl md:text-2xl font-light whitespace-nowrap text-white">
