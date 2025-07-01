@@ -26,6 +26,14 @@ const nextConfig = {
         // Handle esbuild
         esbuild: false,
       },
+      // Add explicit path aliases for Docker build
+      alias: {
+        ...config.resolve?.alias,
+        '@/lib': require('path').resolve(__dirname, './lib'),
+        '@/components': require('path').resolve(__dirname, './components'),
+        '@/app': require('path').resolve(__dirname, './app'),
+        '@/public': require('path').resolve(__dirname, './public'),
+      }
     };
 
     // Add esbuild to external modules
