@@ -317,3 +317,32 @@ export const LAMBDA_CONFIG = {
   MEMORY_SIZE: 3008, // MB
 } as const;
 
+
+// Additional constants needed by the editor
+export const ZOOM_CONSTRAINTS = {
+  MIN: 0.1,
+  MAX: 5,
+  DEFAULT: 1
+};
+
+export const FPS = 30;
+
+export const DEFAULT_OVERLAYS = {
+  VIDEO: [],
+  AUDIO: [],
+  TEXT: [],
+  IMAGE: [],
+  CAPTIONS: []
+};
+
+export const RENDER_TYPE = {
+  PREVIEW: 'preview',
+  EXPORT: 'export',
+  THUMBNAIL: 'thumbnail'
+};
+
+export const AUTO_SAVE_INTERVAL = 30000; // 30 seconds
+
+export const INITIAL_ROWS = 5;
+export const MAX_ROWS = 20;
+
