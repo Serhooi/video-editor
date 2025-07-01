@@ -26,7 +26,8 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
   onSubtitlesGenerated,
   videoFile
 }) => {
-  const [apiKey, setApiKey] = useState('');
+  // Используем API ключ из переменных окружения
+  const apiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY || '';
   const [language, setLanguage] = useState('ru');
   const [style, setStyle] = useState<'casual' | 'formal' | 'social-media' | 'educational'>('casual');
   const [maxWords, setMaxWords] = useState(8);
@@ -67,7 +68,7 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
     }
 
     if (!apiKey.trim()) {
-      setError('Пожалуйста, введите OpenAI API ключ');
+      setError('API ключ не настроен. Обратитесь к администратору.');
       return;
     }
 
@@ -174,25 +175,6 @@ export const AutoSubtitlesGenerator: React.FC<AutoSubtitlesGeneratorProps> = ({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* API Key Input */}
-        <div className="space-y-2">
-          <Label htmlFor="apiKey">OpenAI API Ключ</Label>
-          <Input
-            id="apiKey"
-            type="password"
-            placeholder="sk-..."
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="font-mono"
-          />
-          <p className="text-sm text-gray-500">
-            Получите ключ на{' '}
-            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-              platform.openai.com
-            </a>
-          </p>
-        </div>
-
         {/* File Upload */}
         {!videoFile && (
           <div className="space-y-2">

@@ -185,7 +185,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <a href="#">
                   <div className="flex aspect-square size-9 items-center justify-center rounded-lg">
                     <Image
-                      src="/icons/logo-rve.png"
+                      src="/icons/logo-new.png"
                       alt="Logo"
                       width={27}
                       height={27}
@@ -208,17 +208,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         setIsOpen(true);
                       }}
                       size="lg"
-                      className={`flex flex-col items-center gap-2 px-1.5 py-2 ${
+                      className={`flex flex-col items-center gap-2 px-2 py-3 min-h-[60px] ${
                         activePanel === item.panel
                           ? "bg-primary/10 text-primary hover:bg-primary/10"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       }`}
                     >
                       <item.icon
-                        className="h-4 w-4 text-gray-700 dark:text-white font-light"
+                        className="h-5 w-5 text-gray-700 dark:text-white font-light"
                         strokeWidth={1.25}
                       />
-                      <span className="text-[8px] font-medium leading-none">
+                      <span className="text-[10px] font-medium leading-tight">
                         {item.title}
                       </span>
                     </SidebarMenuButton>

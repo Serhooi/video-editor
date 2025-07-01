@@ -340,19 +340,19 @@ export const CaptionsPanel: React.FC = () => {
                     variant="outline"
                     className="w-full border-dashed border-2 border-gray-200 dark:border-gray-700 
                     hover:border-blue-500/50 bg-gray-50/50 dark:bg-gray-800/50 
-                    hover:bg-gray-100 dark:hover:bg-gray-800 h-28 
+                    hover:bg-gray-100 dark:hover:bg-gray-800 h-32 
                     flex flex-col items-center justify-center gap-3 text-sm group transition-all duration-200"
                     onClick={() =>
                       document.getElementById("file-upload")?.click()
                     }
                   >
-                    <Upload className="w-4 h-4 text-gray-600 dark:text-gray-400 group-hover:text-blue-500 transition-colors" />
-                    <div className="flex flex-col items-center">
-                      <span className="text-gray-600 dark:text-gray-300 group-hover:text-gray-800 dark:group-hover:text-gray-200">
+                    <Upload className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-blue-500 transition-colors" />
+                    <div className="flex flex-col items-center space-y-1">
+                      <span className="text-gray-600 dark:text-gray-300 group-hover:text-gray-800 dark:group-hover:text-gray-200 font-medium">
                         Upload Script File
                       </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                        Supported formats: .json, .srt, .vtt, .txt
+                      <span className="text-xs text-gray-500 dark:text-gray-500 text-center px-2">
+                        Supported: .json, .srt, .vtt, .txt
                       </span>
                     </div>
                   </Button>

@@ -105,25 +105,30 @@ export const CaptionLayerContent: React.FC<CaptionLayerContentProps> = ({
 
   return (
     <div
-      className="absolute inset-0 flex items-center justify-center p-4"
+      className="absolute inset-0 flex items-center justify-center p-6"
       style={{
         ...styles,
         width: "100%",
         height: "100%",
+        overflow: "hidden",
       }}
     >
       <div
-        className="leading-relaxed tracking-wide"
+        className="leading-relaxed tracking-wide max-w-full"
         style={{
           whiteSpace: "pre-wrap",
           width: "100%",
+          maxWidth: "90%",
           textAlign: "center",
           wordBreak: "break-word",
+          overflowWrap: "break-word",
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
           alignItems: "center",
-          gap: "2px",
+          gap: "4px",
+          padding: "8px",
+          boxSizing: "border-box",
         }}
       >
         {renderWords(currentCaption)}
