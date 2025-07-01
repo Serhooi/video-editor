@@ -1,15 +1,15 @@
 import React from "react";
 import { useCurrentFrame } from "remotion";
-import { Caption, CaptionOverlay } from "../../../types";
+import { Caption, Overlay } from "../../../types";
 import { defaultCaptionStyles } from "./caption-settings";
 
 /**
  * Props for the CaptionLayerContent component
  * @interface CaptionLayerContentProps
- * @property {CaptionOverlay} overlay - The caption overlay object containing timing and style information
+ * @property {Overlay} overlay - The overlay object containing timing and style information
  */
 interface CaptionLayerContentProps {
-  overlay: CaptionOverlay;
+  overlay: Overlay;
 }
 
 /**

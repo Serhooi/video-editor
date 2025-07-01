@@ -523,3 +523,87 @@ export interface RemotionInputProps {
   [key: string]: any;
 }
 
+
+
+// Overlay types
+export enum OverlayType {
+  VIDEO = 'video',
+  AUDIO = 'audio',
+  SOUND = 'sound',
+  TEXT = 'text',
+  IMAGE = 'image',
+  EFFECT = 'effect',
+  TRANSITION = 'transition',
+  STICKER = 'sticker',
+  CAPTION = 'caption',
+  LOCAL_DIR = 'local_dir',
+  TEMPLATE = 'template'
+}
+
+// Clip overlay interface
+export interface ClipOverlay {
+  id: UUID;
+  type: OverlayType;
+  from: number;
+  durationInFrames: number;
+  row: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  data?: any;
+}
+
+
+// Overlay interface
+export interface Overlay {
+  id: UUID;
+  type: OverlayType;
+  from: number;
+  durationInFrames: number;
+  row: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  isDragging?: boolean;
+  content?: string;
+  src?: string;
+  videoStartTime?: number;
+  captions?: Caption[];
+  styles?: {
+    opacity?: number;
+    zIndex?: number;
+    transform?: string;
+    objectFit?: string;
+    padding?: string;
+    paddingBackgroundColor?: string;
+    filter?: string;
+  };
+}
+
+
+// Caption types
+export interface Caption {
+  id: UUID;
+  text: string;
+  startTime: number;
+  endTime: number;
+  style?: CaptionStyle;
+}
+
+export interface CaptionStyle {
+  fontSize?: number;
+  fontFamily?: string;
+  color?: string;
+  backgroundColor?: string;
+  position?: 'top' | 'bottom' | 'center';
+  alignment?: 'left' | 'center' | 'right';
+}
+
+export interface CaptionOverlay extends Overlay {
+  type: OverlayType.CAPTION;
+  captions?: Caption[];
+}
+

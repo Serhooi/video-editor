@@ -1,54 +1,70 @@
+import { NextRequest, NextResponse } from "next/server";
 import { AwsRegion, getRenderProgress } from "@remotion/lambda/client";
-
-import {
-  ProgressRequest,
-  ProgressResponse,
-} from "@/lib/types";
-import { executeApi } from "@/lib/api-response";
 import {
   LAMBDA_FUNCTION_NAME,
   REGION,
 } from "@/lib/constants";
 
+interface ProgressRequest {
+  id: string;
+  bucketName?: string;
+}
+
+interface ProgressResponse {
+  type: 'error' | 'done' | 'progress';
+  message?: string;
+  progress?: number;
+  url?: string;
+  size?: number;
+}
+
 /**
  * API endpoint to check the progress of a Remotion video render on AWS Lambda
- *
- * @route POST /api/latest/lambda/progress
- * @returns {ProgressResponse} The current status of the render
- *   - type: 'error' - If a fatal error occurred during rendering
- *   - type: 'done' - If rendering is complete, includes output URL and file size
- *   - type: 'progress' - If rendering is in progress, includes completion percentage
  */
-export const POST = executeApi<ProgressResponse, typeof ProgressRequest>(
-  ProgressRequest,
-  async (req, body) => {
+export async function POST(request: NextRequest) {
+  try {
+    const body: ProgressRequest = await request.json();
+    
     console.log("Progress request", { body });
     console.log("Bucket name", { bucketName: body.bucketName });
+    
     const renderProgress = await getRenderProgress({
-      bucketName: body.bucketName,
+      bucketName: body.bucketName || 'default-bucket',
       functionName: LAMBDA_FUNCTION_NAME,
       region: REGION as AwsRegion,
       renderId: body.id,
     });
 
     if (renderProgress.fatalErrorEncountered) {
-      return {
+      const response: ProgressResponse = {
         type: "error",
-        message: renderProgress.errors[0].message,
+        message: renderProgress.errors[0]?.message || "Unknown error",
       };
+      return NextResponse.json(response);
     }
 
     if (renderProgress.done) {
-      return {
+      const response: ProgressResponse = {
         type: "done",
         url: renderProgress.outputFile as string,
         size: renderProgress.outputSizeInBytes as number,
       };
+      return NextResponse.json(response);
     }
 
-    return {
+    const response: ProgressResponse = {
       type: "progress",
       progress: Math.max(0.03, renderProgress.overallProgress),
     };
+    return NextResponse.json(response);
+    
+  } catch (error) {
+    console.error("Error in progress API:", error);
+    const response: ProgressResponse = {
+      type: "error",
+      message: error instanceof Error ? error.message : "Unknown error",
+    };
+    return NextResponse.json(response, { status: 500 });
   }
-);
+}
+

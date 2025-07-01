@@ -1,86 +1,64 @@
-import { AwsRegion, RenderMediaOnLambdaOutput } from "@remotion/lambda/client";
-import { renderMediaOnLambda } from "@remotion/lambda/client";
-import { RenderRequest } from "@/lib/types";
-import { executeApi } from "@/lib/api-response";
-
+import { NextRequest, NextResponse } from "next/server";
+import { AwsRegion, renderMediaOnLambda } from "@remotion/lambda/client";
 import {
   LAMBDA_FUNCTION_NAME,
   REGION,
   SITE_NAME,
 } from "@/lib/constants";
 
-/**
- * Configuration for the Lambda render function
- */
-const LAMBDA_CONFIG = {
-  FUNCTION_NAME: LAMBDA_FUNCTION_NAME,
-  FRAMES_PER_LAMBDA: 100,
-  MAX_RETRIES: 2,
-  CODEC: "h264" as const,
-} as const;
+interface RenderRequest {
+  id: string;
+  inputProps: any;
+  bucketName?: string;
+  composition?: string;
+  codec?: string;
+  crf?: number;
+}
+
+interface RenderResponse {
+  type: 'success' | 'error';
+  renderId?: string;
+  bucketName?: string;
+  message?: string;
+  error?: string;
+}
 
 /**
- * Validates AWS credentials are present in environment variables
- * @throws {TypeError} If AWS credentials are missing
+ * API endpoint to start a Remotion video render on AWS Lambda
  */
-const validateAwsCredentials = () => {
-  console.log("Validating AWS credentials....");
-  if (
-    !process.env.AWS_ACCESS_KEY_ID &&
-    !process.env.REMOTION_AWS_ACCESS_KEY_ID
-  ) {
-    throw new TypeError(
-      "Set up Remotion Lambda to render videos. See the README.md for how to do so."
-    );
+export async function POST(request: NextRequest) {
+  try {
+    const body: RenderRequest = await request.json();
+    
+    console.log("Render request", { body });
+    
+    const renderResponse = await renderMediaOnLambda({
+      region: REGION as AwsRegion,
+      functionName: LAMBDA_FUNCTION_NAME,
+      serveUrl: SITE_NAME,
+      composition: body.composition || "Main",
+      inputProps: body.inputProps,
+      codec: (body.codec as any) || "h264",
+      imageFormat: "jpeg",
+      maxRetries: 1,
+      framesPerLambda: 20,
+    });
+
+    const response: RenderResponse = {
+      type: "success",
+      renderId: renderResponse.renderId,
+      bucketName: renderResponse.bucketName,
+    };
+    
+    return NextResponse.json(response);
+    
+  } catch (error) {
+    console.error("Error in render API:", error);
+    const response: RenderResponse = {
+      type: "error",
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+    return NextResponse.json(response, { status: 500 });
   }
-  if (
-    !process.env.AWS_SECRET_ACCESS_KEY &&
-    !process.env.REMOTION_AWS_SECRET_ACCESS_KEY
-  ) {
-    throw new TypeError(
-      "The environment variable REMOTION_AWS_SECRET_ACCESS_KEY is missing. Add it to your .env file."
-    );
-  }
-};
+}
 
-/**
- * POST endpoint handler for rendering media using Remotion Lambda
- * @description Handles video rendering requests by delegating to AWS Lambda
- * @throws {Error} If rendering fails or AWS credentials are invalid
- */
-export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
-  RenderRequest,
-  async (req, body) => {
-    // Debug logging
-    // console.log("Received body:", JSON.stringify(body, null, 2));
-    // console.log("inputProps:", JSON.stringify(body.inputProps, null, 2));
-
-    // Validate AWS credentials
-    validateAwsCredentials();
-
-    try {
-      console.log("Rendering media on Lambda....");
-      const result = await renderMediaOnLambda({
-        codec: LAMBDA_CONFIG.CODEC,
-        functionName: LAMBDA_CONFIG.FUNCTION_NAME,
-        region: REGION as AwsRegion,
-        serveUrl: SITE_NAME,
-        composition: body.id,
-        inputProps: body.inputProps,
-        framesPerLambda: LAMBDA_CONFIG.FRAMES_PER_LAMBDA,
-        downloadBehavior: {
-          type: "download",
-          fileName: "video.mp4",
-        },
-        maxRetries: LAMBDA_CONFIG.MAX_RETRIES,
-        everyNthFrame: 1,
-      });
-
-      console.log("Render result:", JSON.stringify(result, null, 2));
-      return result;
-    } catch (error) {
-      console.error("Error in renderMediaOnLambda:", error);
-      throw error;
-    }
-  }
-);

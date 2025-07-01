@@ -7,12 +7,12 @@ import { Overlay } from "../../types";
  * Props for the Layer component
  * @interface LayerProps
  * @property {Overlay} overlay - The overlay object containing position, dimensions, and content information
- * @property {number | null} selectedOverlayId - ID of the currently selected overlay, used for interaction states
+ * @property {string | null} selectedOverlayId - ID of the currently selected overlay, used for interaction states
  * @property {string | undefined} baseUrl - The base URL for the video
  */
 export const Layer: React.FC<{
   overlay: Overlay;
-  selectedOverlayId: number | null;
+  selectedOverlayId: string | null;
   baseUrl?: string;
 }> = ({ overlay, selectedOverlayId, baseUrl }) => {
   /**
