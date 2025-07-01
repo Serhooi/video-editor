@@ -1,5 +1,4 @@
 const path = require('path');
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -28,6 +27,8 @@ const nextConfig = {
       // Add explicit path aliases for Docker build
       alias: {
         ...config.resolve?.alias,
+        '@': path.resolve(__dirname), // Общий алиас на корень проекта
+        '@/hooks': path.resolve(__dirname, './hooks'), // Алиас на директорию hooks
         '@/lib': path.resolve(__dirname, './lib'),
         '@/components': path.resolve(__dirname, './components'),
         '@/app': path.resolve(__dirname, './app'),
@@ -48,6 +49,5 @@ const nextConfig = {
     ],
   },
 };
-
 module.exports = nextConfig;
 
