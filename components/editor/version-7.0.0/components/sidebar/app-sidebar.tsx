@@ -176,7 +176,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* First sidebar */}
       <Sidebar
         collapsible="none"
-        className="!w-[90px] bg-background border-r"
+        className="!w-[100px] bg-background border-r"
       >
         <SidebarHeader className="">
           <SidebarMenu>
@@ -219,7 +219,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         className="h-7 w-7 text-gray-700 dark:text-white font-light"
                         strokeWidth={1.25}
                       />
-                      <span className="text-[10px] font-medium leading-tight text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px]">
+                      <span className="text-[10px] font-medium leading-tight text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-[90px]">
                         {item.title}
                       </span>
                     </SidebarMenuButton>
@@ -245,7 +245,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* Second sidebar */}
       <Sidebar
         collapsible="none"
-        className="hidden w-[400px] md:flex bg-background border-r"
+        className="w-[500px] flex bg-background border-r"
       >
         <SidebarHeader className="gap-3.5 border-b px-4 py-[12px]">
           <div className="flex w-full items-center justify-between">
