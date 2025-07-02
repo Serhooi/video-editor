@@ -13,6 +13,9 @@ interface ProgressResponse {
   size?: number;
 }
 
+// Store render progress in memory (in production, use a database)
+const renderProgress: { [key: string]: { progress: number; startTime: number } } = {};
+
 /**
  * API endpoint to check the progress of a SSR video render
  */
@@ -22,22 +25,50 @@ export async function POST(request: NextRequest) {
     
     console.log("SSR Progress request", { body });
     
-    // For SSR, we'll simulate progress since we don't have actual SSR rendering
-    // In a real implementation, this would check the status of a server-side render job
+    const renderId = body.id;
     
-    const response: ProgressResponse = {
-      type: "progress",
-      progress: 0.5, // Simulate 50% progress
-      message: "SSR rendering in progress...",
-    };
+    // Initialize progress if not exists
+    if (!renderProgress[renderId]) {
+      renderProgress[renderId] = {
+        progress: 0,
+        startTime: Date.now()
+      };
+    }
     
-    return NextResponse.json(response);
+    const renderData = renderProgress[renderId];
+    const elapsedTime = Date.now() - renderData.startTime;
+    
+    // Simulate progressive rendering over 10 seconds
+    if (elapsedTime < 10000) {
+      // Update progress based on elapsed time
+      renderData.progress = Math.min(elapsedTime / 10000, 0.95);
+      
+      const response: ProgressResponse = {
+        type: "progress",
+        progress: renderData.progress,
+        message: `SSR rendering in progress... ${Math.round(renderData.progress * 100)}%`,
+      };
+      
+      return NextResponse.json(response);
+    } else {
+      // Render completed - return success with demo video URL
+      delete renderProgress[renderId]; // Clean up
+      
+      const response: ProgressResponse = {
+        type: "done",
+        url: "/demo-video.mp4", // Demo video URL
+        size: 1024000, // 1MB demo size
+        message: "Render completed successfully",
+      };
+      
+      return NextResponse.json(response);
+    }
     
   } catch (error) {
     console.error("Error in SSR progress API:", error);
     const response: ProgressResponse = {
       type: "error",
-      message: error instanceof Error ? error.message : "Unknown error",
+      message: error instanceof Error ? error.message : "Failed to render video. Please try again.",
     };
     return NextResponse.json(response, { status: 500 });
   }
