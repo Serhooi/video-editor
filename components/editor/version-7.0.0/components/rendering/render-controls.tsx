@@ -201,8 +201,16 @@ const RenderControls: React.FC<RenderControlsProps> = ({
 
       <Button
         onClick={() => {
-          alert("🎬 RENDER BUTTON CLICKED!");
-          handleRender();
+          console.log("🎬 RENDER BUTTON CLICKED! State:", state);
+          console.log("🎬 handleRender function:", handleRender);
+          alert("🎬 RENDER BUTTON CLICKED! Check console for details.");
+          try {
+            handleRender();
+            console.log("✅ handleRender() called successfully");
+          } catch (error) {
+            console.error("❌ Error calling handleRender:", error);
+            alert("❌ Error: " + error);
+          }
         }}
         size="sm"
         variant="outline"
