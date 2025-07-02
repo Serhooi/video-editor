@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   try {
     const body: ProgressRequest = await request.json();
     
-    console.log("SSR Progress request", { body });
+    console.log("SSR Progress request", { body, timestamp: new Date().toISOString() });
     
     const renderId = body.id;
     
