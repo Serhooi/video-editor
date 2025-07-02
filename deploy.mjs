@@ -1,97 +1,120 @@
+/**
+ * AWS Lambda deployment script for Remotion video rendering
+ * Run with: npm run deploy
+ */
+
 import {
-  deployFunction,
-  deploySite,
-  getOrCreateBucket,
+	deployFunction,
+	deploySite,
+	getOrCreateBucket,
+	getFunctions,
+	getSites
 } from "@remotion/lambda";
+import { lambdaConfig, bucketConfig, siteConfig } from "./config.mjs";
 import dotenv from "dotenv";
-import path from "path";
-import { RAM, REGION, SITE_NAME, TIMEOUT, DISK } from "./config.mjs";
 
-/**
- * This script deploys the Remotion video rendering infrastructure to AWS Lambda.
- * It sets up three main components:
- * 1. Lambda Function - For serverless video rendering
- * 2. S3 Bucket - For storing rendered videos and assets
- * 3. Remotion Site - The video template that will be rendered
- */
+// Load environment variables
+dotenv.config({ path: ".env.local" });
 
-console.log("Selected region:", REGION);
-dotenv.config();
+const REGION = process.env.REMOTION_AWS_REGION || "us-east-1";
+const ACCESS_KEY_ID = process.env.REMOTION_AWS_ACCESS_KEY_ID;
+const SECRET_ACCESS_KEY = process.env.REMOTION_AWS_SECRET_ACCESS_KEY;
 
-if (!process.env.AWS_ACCESS_KEY_ID && !process.env.REMOTION_AWS_ACCESS_KEY_ID) {
-  console.log(
-    'The environment variable "REMOTION_AWS_ACCESS_KEY_ID" is not set.'
-  );
-  console.log("Lambda renders were not set up.");
-  console.log(
-    "Complete the Lambda setup: at https://www.remotion.dev/docs/lambda/setup"
-  );
-  process.exit(0);
-}
-if (
-  !process.env.AWS_SECRET_ACCESS_KEY &&
-  !process.env.REMOTION_AWS_SECRET_ACCESS_KEY
-) {
-  console.log(
-    'The environment variable "REMOTION_REMOTION_AWS_SECRET_ACCESS_KEY" is not set.'
-  );
-  console.log("Lambda renders were not set up.");
-  console.log(
-    "Complete the Lambda setup: at https://www.remotion.dev/docs/lambda/setup"
-  );
-  process.exit(0);
+if (!ACCESS_KEY_ID || !SECRET_ACCESS_KEY) {
+	console.error("❌ Missing AWS credentials!");
+	console.error("Please set REMOTION_AWS_ACCESS_KEY_ID and REMOTION_AWS_SECRET_ACCESS_KEY");
+	process.exit(1);
 }
 
-process.stdout.write("Deploying Lambda function... ");
+console.log("🚀 Starting AWS Lambda deployment...");
 
-const { functionName, alreadyExisted: functionAlreadyExisted } =
-  await deployFunction({
-    createCloudWatchLogGroup: true,
-    memorySizeInMb: RAM,
-    region: REGION,
-    timeoutInSeconds: TIMEOUT,
-    diskSizeInMb: DISK,
-  });
-console.log(
-  functionName,
-  functionAlreadyExisted ? "(already existed)" : "(created)"
-);
+async function deployAll() {
+	try {
+		// Step 1: Create S3 bucket
+		console.log("📦 Creating S3 bucket...");
+		const bucket = await getOrCreateBucket({
+			region: REGION,
+			bucketName: bucketConfig.bucketName
+		});
+		console.log(`✅ S3 bucket ready: ${bucket.bucketName}`);
 
-process.stdout.write("Ensuring bucket... ");
-const { bucketName, alreadyExisted: bucketAlreadyExisted } =
-  await getOrCreateBucket({
-    region: REGION,
-  });
-console.log(
-  bucketName,
-  bucketAlreadyExisted ? "(already existed)" : "(created)"
-);
+		// Step 2: Deploy Lambda function
+		console.log("⚡ Deploying Lambda function...");
+		const existingFunctions = await getFunctions({
+			region: REGION,
+			compatibleOnly: false
+		});
+		
+		const existingFunction = existingFunctions.find(
+			fn => fn.functionName === lambdaConfig.functionName
+		);
 
-process.stdout.write("Deploying site... ");
-const { siteName } = await deploySite({
-  bucketName,
-  entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
-  siteName: SITE_NAME,
-  region: REGION,
-});
+		let functionInfo;
+		if (existingFunction) {
+			console.log("🔄 Updating existing Lambda function...");
+			functionInfo = existingFunction;
+		} else {
+			console.log("🆕 Creating new Lambda function...");
+			functionInfo = await deployFunction({
+				region: REGION,
+				functionName: lambdaConfig.functionName,
+				memorySize: lambdaConfig.memorySize,
+				timeout: lambdaConfig.timeout,
+				diskSizeInMb: lambdaConfig.diskSizeInMb,
+				architecture: lambdaConfig.architecture
+			});
+		}
+		console.log(`✅ Lambda function ready: ${functionInfo.functionName}`);
 
-console.log(siteName);
+		// Step 3: Deploy Remotion site
+		console.log("🌐 Deploying Remotion site...");
+		const existingSites = await getSites({
+			region: REGION
+		});
+		
+		const existingSite = existingSites.sites.find(
+			site => site.id === siteConfig.siteName
+		);
 
-console.log();
-console.log("You now have everything you need to render videos!");
-console.log("Re-run this command when:");
-console.log("  1) you changed the video template");
-console.log("  2) you changed config.mjs");
-console.log("  3) you upgraded Remotion to a newer version");
+		let siteInfo;
+		if (existingSite) {
+			console.log("🔄 Site already exists, using existing...");
+			siteInfo = existingSite;
+		} else {
+			console.log("🆕 Creating new Remotion site...");
+			siteInfo = await deploySite({
+				region: REGION,
+				bucketName: bucketConfig.bucketName,
+				siteName: siteConfig.siteName,
+				entryPoint: "./src/index.ts",
+				options: {
+					onBundleProgress: (progress) => {
+						console.log(`📦 Bundling: ${Math.round(progress * 100)}%`);
+					},
+					onUploadProgress: (progress) => {
+						console.log(`⬆️ Uploading: ${Math.round(progress * 100)}%`);
+					}
+				}
+			});
+		}
+		console.log(`✅ Remotion site ready: ${siteInfo.id}`);
 
-/**
- * After running this script:
- * - A Lambda function will be created/updated for rendering videos
- * - An S3 bucket will be created/verified for storage
- * - The Remotion site (video template) will be deployed
- *
- * The script should be re-run when:
- * 1. The video template code is modified
- * 2. Configuration in config.mjs changes
- * 3. Remotion is upgraded to a new version
- */
+		// Step 4: Display results
+		console.log("\n🎉 DEPLOYMENT SUCCESSFUL!");
+		console.log("\n📋 Add these environment variables to Vercel:");
+		console.log(`REMOTION_AWS_BUCKET_NAME=${bucket.bucketName}`);
+		console.log(`REMOTION_AWS_FUNCTION_NAME=${functionInfo.functionName}`);
+		console.log(`REMOTION_AWS_SITE_NAME=${siteInfo.id}`);
+		console.log(`REMOTION_AWS_REGION=${REGION}`);
+		
+		console.log("\n🔧 Your AWS Lambda setup is complete!");
+		console.log("💡 Don't forget to add these variables to Vercel and redeploy!");
+
+	} catch (error) {
+		console.error("❌ Deployment failed:", error);
+		process.exit(1);
+	}
+}
+
+deployAll();
+

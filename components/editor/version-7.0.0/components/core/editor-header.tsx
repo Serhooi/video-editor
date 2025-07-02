@@ -73,6 +73,14 @@ export function EditorHeader() {
       {/* Theme toggle component (client-side only) */}
       <ThemeToggleClient />
 
+      {/* AWS Deploy button */}
+      <a
+        href="/deploy-aws"
+        className="px-3 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 transition-colors"
+      >
+        🚀 Deploy AWS
+      </a>
+
       {/* Spacer to push rendering controls to the right */}
       <div className="flex-grow" />
 

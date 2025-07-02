@@ -1,76 +1,115 @@
-import { NextRequest, NextResponse } from "next/server";
-
-interface ProgressRequest {
-  id: string;
-  bucketName?: string;
-}
-
-interface ProgressResponse {
-  type: 'error' | 'done' | 'progress';
-  message?: string;
-  progress?: number;
-  url?: string;
-  size?: number;
-}
-
-// Store render progress in memory (in production, use a database)
-const renderProgress: { [key: string]: { progress: number; startTime: number } } = {};
-
 /**
- * API endpoint to check the progress of a SSR video render
+ * Video render progress API endpoint
+ * Tracks AWS Lambda render progress and returns results
  */
-export async function POST(request: NextRequest) {
-  try {
-    const body: ProgressRequest = await request.json();
-    
-    console.log("SSR Progress request", { body, timestamp: new Date().toISOString() });
-    
-    const renderId = body.id;
-    
-    // Initialize progress if not exists
-    if (!renderProgress[renderId]) {
-      renderProgress[renderId] = {
-        progress: 0,
-        startTime: Date.now()
-      };
-    }
-    
-    const renderData = renderProgress[renderId];
-    const elapsedTime = Date.now() - renderData.startTime;
-    
-    // Simulate progressive rendering over 10 seconds
-    if (elapsedTime < 10000) {
-      // Update progress based on elapsed time
-      renderData.progress = Math.min(elapsedTime / 10000, 0.95);
-      
-      const response: ProgressResponse = {
-        type: "progress",
-        progress: renderData.progress,
-        message: `SSR rendering in progress... ${Math.round(renderData.progress * 100)}%`,
-      };
-      
-      return NextResponse.json(response);
-    } else {
-      // Render completed - return success with demo video URL
-      delete renderProgress[renderId]; // Clean up
-      
-      const response: ProgressResponse = {
-        type: "done",
-        url: "/demo-video.mp4", // Demo video URL
-        size: 1024000, // 1MB demo size
-        message: "Render completed successfully",
-      };
-      
-      return NextResponse.json(response);
-    }
-    
-  } catch (error) {
-    console.error("Error in SSR progress API:", error);
-    const response: ProgressResponse = {
-      type: "error",
-      message: error instanceof Error ? error.message : "Failed to render video. Please try again.",
-    };
-    return NextResponse.json(response, { status: 500 });
-  }
+
+import { NextRequest, NextResponse } from "next/server";
+import { getRenderProgress } from "@remotion/lambda/client";
+
+const REGION = process.env.REMOTION_AWS_REGION || "us-east-1";
+const BUCKET_NAME = process.env.REMOTION_AWS_BUCKET_NAME;
+
+export async function GET(request: NextRequest) {
+	try {
+		const { searchParams } = new URL(request.url);
+		const renderId = searchParams.get("renderId");
+
+		if (!renderId) {
+			return NextResponse.json({
+				type: "error",
+				error: "Missing renderId parameter"
+			}, { status: 400 });
+		}
+
+		console.log(`📊 Checking progress for render: ${renderId}`);
+
+		// Get render progress from AWS Lambda
+		const progress = await getRenderProgress({
+			renderId,
+			bucketName: BUCKET_NAME!,
+			region: REGION
+		});
+
+		console.log(`📈 Render progress:`, progress);
+
+		// Handle different render states
+		switch (progress.type) {
+			case "success":
+				console.log(`✅ Render completed: ${progress.outputFile}`);
+				return NextResponse.json({
+					type: "success",
+					status: "completed",
+					progress: 100,
+					videoUrl: progress.outputFile,
+					outputFile: progress.outputFile,
+					renderTime: progress.renderMetadata?.totalRenderTime || 0
+				});
+
+			case "progress":
+				const progressPercent = Math.round(progress.progress * 100);
+				console.log(`⏳ Render in progress: ${progressPercent}%`);
+				return NextResponse.json({
+					type: "progress",
+					status: "rendering",
+					progress: progressPercent,
+					message: `Rendering video... ${progressPercent}%`
+				});
+
+			case "error":
+				console.error(`❌ Render failed:`, progress.errors);
+				return NextResponse.json({
+					type: "error",
+					status: "failed",
+					error: progress.errors.join(", "),
+					message: "Render failed. Please try again."
+				}, { status: 500 });
+
+			default:
+				console.log(`🔄 Render status: ${progress.type}`);
+				return NextResponse.json({
+					type: "progress",
+					status: "processing",
+					progress: 0,
+					message: "Initializing render..."
+				});
+		}
+
+	} catch (error) {
+		console.error("❌ Progress check failed:", error);
+		
+		// Handle specific AWS errors
+		if (error instanceof Error) {
+			if (error.message.includes("RenderNotFound")) {
+				return NextResponse.json({
+					type: "error",
+					error: "Render not found. It may have expired or been deleted."
+				}, { status: 404 });
+			}
+			
+			if (error.message.includes("AccessDenied")) {
+				return NextResponse.json({
+					type: "error",
+					error: "AWS access denied. Please check your credentials."
+				}, { status: 403 });
+			}
+		}
+
+		return NextResponse.json({
+			type: "error",
+			error: error instanceof Error ? error.message : "Unknown progress error"
+		}, { status: 500 });
+	}
+}
+
+// Handle OPTIONS for CORS
+export async function OPTIONS() {
+	return new NextResponse(null, {
+		status: 200,
+		headers: {
+			"Access-Control-Allow-Origin": "*",
+			"Access-Control-Allow-Methods": "GET, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
+		},
+	});
 }
 
