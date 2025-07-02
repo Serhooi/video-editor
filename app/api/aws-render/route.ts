@@ -121,9 +121,10 @@ export async function POST(request: NextRequest) {
           renderType: 'simple-fallback',
           fallbackReason: 'AWS Lambda failed',
           originalError: error.message
-        });
+        }, { status: 200 }); // Explicitly return 200 for successful fallback
       } else {
-        throw new Error(`Simple render fallback also failed: ${simpleRenderResponse.status}`);
+        const errorText = await simpleRenderResponse.text();
+        throw new Error(`Simple render fallback failed: ${simpleRenderResponse.status} - ${errorText}`);
       }
     } catch (fallbackError: any) {
       console.error('❌ Fallback render also failed:', fallbackError);
