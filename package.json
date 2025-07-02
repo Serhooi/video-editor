@@ -43,6 +43,7 @@
     "@remotion/player": "v4.0.272",
     "@remotion/renderer": "v4.0.272",
     "@remotion/studio": "v4.0.272",
+    "aws-sdk": "^2.1692.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
