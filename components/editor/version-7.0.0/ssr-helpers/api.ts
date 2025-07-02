@@ -24,22 +24,30 @@ const makeRequest = async <Res>(
       "content-type": "application/json",
     },
   });
-  const json = (await result.json()) as ApiResponse<Res>;
+  
+  if (!result.ok) {
+    throw new Error(`HTTP error! status: ${result.status}`);
+  }
+  
+  const json = await result.json();
   console.log(`Response received from ${endpoint}`, { json });
+  
+  // Check if response has error type
   if (json.type === "error") {
-    console.error(`Error in response from ${endpoint}:`, json.message);
-    throw new Error(json.message);
+    console.error(`Error in response from ${endpoint}:`, json.error || json.message);
+    throw new Error(json.error || json.message || "Unknown error");
   }
 
-  if (!json.data) {
-    throw new Error(`No data received from ${endpoint}`);
-  }
-
-  return json.data;
+  // Return the response directly (not wrapped in data)
+  return json as Res;
 };
 
 export interface RenderResponse {
-  renderId: string;
+  type: 'success' | 'error';
+  renderId?: string;
+  bucketName?: string;
+  message?: string;
+  error?: string;
 }
 
 export const renderVideo = async ({
@@ -60,7 +68,12 @@ export const renderVideo = async ({
     body
   );
   console.log("Video render response", { response });
-  return response;
+  
+  // Return the response with renderId extracted
+  return {
+    renderId: response.renderId!,
+    bucketName: response.bucketName
+  };
 };
 
 export const getProgress = async ({
@@ -81,5 +94,7 @@ export const getProgress = async ({
     body
   );
   console.log("Progress response", { response });
+  
+  // Return the response directly as it already has the correct format
   return response;
 };
