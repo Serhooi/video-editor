@@ -200,7 +200,12 @@ const RenderControls: React.FC<RenderControlsProps> = ({
       </Popover>
 
       <Button
-        onClick={handleRender}
+        onClick={() => {
+          console.log("🎬 Render button clicked!");
+          console.log("🎬 handleRender function:", typeof handleRender);
+          console.log("🎬 Current state:", state);
+          handleRender();
+        }}
         size="sm"
         variant="outline"
         disabled={state.status === "rendering" || state.status === "invoking"}
