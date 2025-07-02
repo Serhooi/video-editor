@@ -12,30 +12,31 @@ const LAMBDA_CONFIG = {
 
 /**
  * Validates AWS credentials are present in environment variables
+ * Prioritizes REMOTION_ prefixed variables over standard AWS variables
  * @throws {TypeError} If AWS credentials are missing
  */
 const validateAwsCredentials = () => {
   console.log("🔍 Validating AWS credentials...");
   
-  if (
-    !process.env.AWS_ACCESS_KEY_ID &&
-    !process.env.REMOTION_AWS_ACCESS_KEY_ID
-  ) {
+  const accessKeyId = process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.REMOTION_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+  
+  if (!accessKeyId) {
     throw new TypeError(
-      "Set up Remotion Lambda to render videos. AWS_ACCESS_KEY_ID or REMOTION_AWS_ACCESS_KEY_ID is missing."
+      "Set up Remotion Lambda to render videos. REMOTION_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID is missing."
     );
   }
   
-  if (
-    !process.env.AWS_SECRET_ACCESS_KEY &&
-    !process.env.REMOTION_AWS_SECRET_ACCESS_KEY
-  ) {
+  if (!secretAccessKey) {
     throw new TypeError(
-      "The environment variable AWS_SECRET_ACCESS_KEY or REMOTION_AWS_SECRET_ACCESS_KEY is missing."
+      "The environment variable REMOTION_AWS_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY is missing."
     );
   }
   
-  console.log("✅ AWS credentials validation passed");
+  console.log("✅ AWS credentials validation passed", {
+    usingRemotionPrefix: !!process.env.REMOTION_AWS_ACCESS_KEY_ID,
+    accessKeyId: accessKeyId.substring(0, 8) + '...'
+  });
 };
 
 /**
@@ -53,23 +54,25 @@ export async function POST(request: NextRequest) {
     // Validate AWS credentials
     validateAwsCredentials();
     
-    // Get configuration from environment variables
-    const region = (process.env.AWS_REGION || process.env.REMOTION_AWS_REGION || 'us-east-1') as AwsRegion;
-    const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.REMOTION_LAMBDA_FUNCTION_NAME;
+    // Get configuration from environment variables (prioritize REMOTION_ prefix)
+    const region = (process.env.REMOTION_AWS_REGION || process.env.AWS_REGION || 'us-east-1') as AwsRegion;
+    const functionName = process.env.REMOTION_LAMBDA_FUNCTION_NAME || process.env.AWS_LAMBDA_FUNCTION_NAME;
     const serveUrl = process.env.REMOTION_SERVE_URL || process.env.SITE_NAME;
     
     console.log('🔧 Remotion Lambda Configuration:', {
       region,
       functionName,
       serveUrl,
-      hasCredentials: !!(
-        (process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID) &&
-        (process.env.AWS_SECRET_ACCESS_KEY || process.env.REMOTION_AWS_SECRET_ACCESS_KEY)
-      )
+      usingRemotionPrefix: {
+        credentials: !!process.env.REMOTION_AWS_ACCESS_KEY_ID,
+        region: !!process.env.REMOTION_AWS_REGION,
+        functionName: !!process.env.REMOTION_LAMBDA_FUNCTION_NAME,
+        serveUrl: !!process.env.REMOTION_SERVE_URL
+      }
     });
     
     if (!functionName) {
-      throw new Error('Missing AWS_LAMBDA_FUNCTION_NAME or REMOTION_LAMBDA_FUNCTION_NAME environment variable');
+      throw new Error('Missing REMOTION_LAMBDA_FUNCTION_NAME or AWS_LAMBDA_FUNCTION_NAME environment variable');
     }
     
     if (!serveUrl) {
@@ -109,12 +112,14 @@ export async function POST(request: NextRequest) {
       },
       maxRetries: LAMBDA_CONFIG.MAX_RETRIES,
       everyNthFrame: 1,
+      logLevel: 'verbose', // Enable verbose logging for debugging
     });
     
     console.log('✅ Remotion Lambda render completed:', {
       renderId: result.renderId,
       bucketName: result.bucketName,
-      outputFile: result.outputFile
+      outputFile: result.outputFile,
+      cloudWatchLogs: result.cloudWatchLogs
     });
     
     return NextResponse.json({
@@ -123,6 +128,7 @@ export async function POST(request: NextRequest) {
       renderId: result.renderId,
       bucketName: result.bucketName,
       outputFile: result.outputFile,
+      cloudWatchLogs: result.cloudWatchLogs,
       renderType: 'remotion-lambda',
       timestamp: new Date().toISOString(),
       result
@@ -133,12 +139,13 @@ export async function POST(request: NextRequest) {
     console.error('Error details:', {
       message: error.message,
       stack: error.stack,
-      functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.REMOTION_LAMBDA_FUNCTION_NAME,
-      region: process.env.AWS_REGION || process.env.REMOTION_AWS_REGION,
+      name: error.name,
+      functionName: process.env.REMOTION_LAMBDA_FUNCTION_NAME || process.env.AWS_LAMBDA_FUNCTION_NAME,
+      region: process.env.REMOTION_AWS_REGION || process.env.AWS_REGION,
       serveUrl: process.env.REMOTION_SERVE_URL || process.env.SITE_NAME,
       hasCredentials: !!(
-        (process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID) &&
-        (process.env.AWS_SECRET_ACCESS_KEY || process.env.REMOTION_AWS_SECRET_ACCESS_KEY)
+        (process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID) &&
+        (process.env.REMOTION_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY)
       )
     });
     
@@ -179,15 +186,21 @@ export async function POST(request: NextRequest) {
         details: 'Both Remotion Lambda and fallback render failed',
         troubleshooting: {
           checkLambdaFunction: 'Verify Remotion Lambda function exists and is deployed',
-          checkCredentials: 'Verify AWS credentials in environment variables',
-          checkServeUrl: 'Verify REMOTION_SERVE_URL or SITE_NAME is set correctly',
-          functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.REMOTION_LAMBDA_FUNCTION_NAME || 'NOT_SET',
-          region: process.env.AWS_REGION || process.env.REMOTION_AWS_REGION,
+          checkCredentials: 'Verify REMOTION_AWS_* credentials in environment variables',
+          checkServeUrl: 'Verify REMOTION_SERVE_URL is set correctly',
+          functionName: process.env.REMOTION_LAMBDA_FUNCTION_NAME || process.env.AWS_LAMBDA_FUNCTION_NAME || 'NOT_SET',
+          region: process.env.REMOTION_AWS_REGION || process.env.AWS_REGION,
           serveUrl: process.env.REMOTION_SERVE_URL || process.env.SITE_NAME,
           hasCredentials: !!(
-            (process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID) &&
-            (process.env.AWS_SECRET_ACCESS_KEY || process.env.REMOTION_AWS_SECRET_ACCESS_KEY)
-          )
+            (process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID) &&
+            (process.env.REMOTION_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY)
+          ),
+          usingRemotionPrefix: {
+            credentials: !!process.env.REMOTION_AWS_ACCESS_KEY_ID,
+            region: !!process.env.REMOTION_AWS_REGION,
+            functionName: !!process.env.REMOTION_LAMBDA_FUNCTION_NAME,
+            serveUrl: !!process.env.REMOTION_SERVE_URL
+          }
         }
       }, { status: 500 });
     }
@@ -200,13 +213,19 @@ export async function GET() {
     status: 'ready',
     timestamp: new Date().toISOString(),
     configuration: {
-      functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.REMOTION_LAMBDA_FUNCTION_NAME || 'NOT_SET',
-      region: process.env.AWS_REGION || process.env.REMOTION_AWS_REGION || 'us-east-1',
+      functionName: process.env.REMOTION_LAMBDA_FUNCTION_NAME || process.env.AWS_LAMBDA_FUNCTION_NAME || 'NOT_SET',
+      region: process.env.REMOTION_AWS_REGION || process.env.AWS_REGION || 'us-east-1',
       serveUrl: process.env.REMOTION_SERVE_URL || process.env.SITE_NAME || 'NOT_SET',
       hasCredentials: !!(
-        (process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID) &&
-        (process.env.AWS_SECRET_ACCESS_KEY || process.env.REMOTION_AWS_SECRET_ACCESS_KEY)
-      )
+        (process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID) &&
+        (process.env.REMOTION_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY)
+      ),
+      usingRemotionPrefix: {
+        credentials: !!process.env.REMOTION_AWS_ACCESS_KEY_ID,
+        region: !!process.env.REMOTION_AWS_REGION,
+        functionName: !!process.env.REMOTION_LAMBDA_FUNCTION_NAME,
+        serveUrl: !!process.env.REMOTION_SERVE_URL
+      }
     }
   });
 }

@@ -200,18 +200,7 @@ const RenderControls: React.FC<RenderControlsProps> = ({
       </Popover>
 
       <Button
-        onClick={() => {
-          console.log("🎬 RENDER BUTTON CLICKED! State:", state);
-          console.log("🎬 handleRender function:", handleRender);
-          alert("🎬 RENDER BUTTON CLICKED! Check console for details.");
-          try {
-            handleRender();
-            console.log("✅ handleRender() called successfully");
-          } catch (error) {
-            console.error("❌ Error calling handleRender:", error);
-            alert("❌ Error: " + error);
-          }
-        }}
+        onClick={handleRender}
         size="sm"
         variant="outline"
         disabled={state.status === "rendering" || state.status === "invoking"}
