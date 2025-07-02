@@ -176,7 +176,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* First sidebar */}
       <Sidebar
         collapsible="none"
-        className="!w-[80px] bg-background border-r"
+        className="!w-[90px] bg-background border-r"
       >
         <SidebarHeader className="">
           <SidebarMenu>
@@ -209,17 +209,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         setIsOpen(true);
                       }}
                       size="lg"
-                      className={`flex flex-col items-center gap-2 px-3 py-4 min-h-[70px] w-full ${
+                      className={`flex flex-col items-center gap-1 px-2 py-3 min-h-[75px] w-full ${
                         activePanel === item.panel
                           ? "bg-primary/10 text-primary hover:bg-primary/10"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       }`}
                     >
                       <item.icon
-                        className="h-6 w-6 text-gray-700 dark:text-white font-light"
+                        className="h-7 w-7 text-gray-700 dark:text-white font-light"
                         strokeWidth={1.25}
                       />
-                      <span className="text-[11px] font-medium leading-tight text-center">
+                      <span className="text-[10px] font-medium leading-tight text-center whitespace-nowrap overflow-hidden text-ellipsis max-w-[80px]">
                         {item.title}
                       </span>
                     </SidebarMenuButton>
@@ -245,7 +245,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* Second sidebar */}
       <Sidebar
         collapsible="none"
-        className="hidden flex-1 md:flex bg-background border-r"
+        className="hidden w-[400px] md:flex bg-background border-r"
       >
         <SidebarHeader className="gap-3.5 border-b px-4 py-[12px]">
           <div className="flex w-full items-center justify-between">
