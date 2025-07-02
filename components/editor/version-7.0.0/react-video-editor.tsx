@@ -103,6 +103,26 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
 
   const { renderVideo, state } = useAWSRendering();
 
+  // Create render function with proper inputProps
+  const renderMedia = useCallback(() => {
+    // Clean inputProps - remove any potential DOM references
+    const cleanInputProps = {
+      overlays: overlays.map(overlay => ({
+        ...overlay,
+        // Remove any potential DOM references
+        element: undefined,
+        ref: undefined,
+      })),
+      durationInFrames,
+      fps: FPS,
+      width: compositionWidth,
+      height: compositionHeight,
+      src: "",
+    };
+    
+    renderVideo(cleanInputProps);
+  }, [overlays, durationInFrames, compositionWidth, compositionHeight, renderVideo]);
+
   // Replace history management code with hook
   const { undo, redo, canUndo, canRedo } = useHistory(overlays, setOverlays);
 
@@ -214,7 +234,7 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
 
     // Add renderType to the context
     renderType: RENDER_TYPE,
-    renderMedia: renderVideo,
+    renderMedia: renderMedia,
     state,
 
     deleteOverlaysByRow,
