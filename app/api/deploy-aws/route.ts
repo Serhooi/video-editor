@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('🚀 Starting AWS Lambda deployment via SDK (v2)...');
+    console.log('🚀 Starting AWS Lambda deployment via SDK (v3 - Fixed credentials)...');
     
     // Check if AWS credentials are available
     const accessKeyId = process.env.REMOTION_AWS_ACCESS_KEY_ID;
@@ -17,10 +17,9 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('✅ AWS credentials found, proceeding with SDK deployment');
+    console.log('🔑 Using Access Key ID:', accessKeyId.substring(0, 8) + '...');
+    console.log('🌍 Using Region:', region);
 
-    // For now, we'll create a simple Lambda function without Remotion CLI
-    // This avoids the npm/CLI issues in Vercel serverless environment
-    
     // Generate unique names
     const timestamp = Date.now();
     const bucketName = `remotion-render-${timestamp}`;
@@ -30,31 +29,51 @@ export async function POST(request: NextRequest) {
       // Import AWS SDK dynamically
       const AWS = await import('aws-sdk');
       
-      // Configure AWS
-      AWS.config.update({
-        accessKeyId,
-        secretAccessKey,
-        region
+      // Create credentials object
+      const credentials = new AWS.Credentials({
+        accessKeyId: accessKeyId,
+        secretAccessKey: secretAccessKey
       });
 
-      const lambda = new AWS.Lambda();
-      const s3 = new AWS.S3();
+      // Configure each service with explicit credentials and region
+      const s3 = new AWS.S3({
+        credentials: credentials,
+        region: region,
+        signatureVersion: 'v4'
+      });
+
+      const lambda = new AWS.Lambda({
+        credentials: credentials,
+        region: region
+      });
+
+      const sts = new AWS.STS({
+        credentials: credentials,
+        region: region
+      });
 
       console.log('📦 Creating S3 bucket:', bucketName);
 
       // Create S3 bucket
       try {
-        await s3.createBucket({
-          Bucket: bucketName,
-          CreateBucketConfiguration: region !== 'us-east-1' ? {
+        const bucketParams: any = {
+          Bucket: bucketName
+        };
+        
+        // Only add LocationConstraint if not us-east-1
+        if (region !== 'us-east-1') {
+          bucketParams.CreateBucketConfiguration = {
             LocationConstraint: region
-          } : undefined
-        }).promise();
+          };
+        }
+        
+        await s3.createBucket(bucketParams).promise();
         console.log('✅ S3 bucket created successfully');
       } catch (bucketError: any) {
         if (bucketError.code === 'BucketAlreadyOwnedByYou' || bucketError.code === 'BucketAlreadyExists') {
           console.log('✅ S3 bucket already exists');
         } else {
+          console.error('❌ S3 bucket creation error:', bucketError);
           throw bucketError;
         }
       }
@@ -110,20 +129,74 @@ exports.handler = async (event) => {
       const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
       // Get AWS account ID for IAM role
-      const sts = new AWS.STS();
+      console.log('🔍 Getting AWS account identity...');
       const identity = await sts.getCallerIdentity().promise();
       const accountId = identity.Account;
+      console.log('✅ AWS Account ID:', accountId);
+
+      // Create IAM role for Lambda if it doesn't exist
+      const iam = new AWS.IAM({
+        credentials: credentials,
+        region: region
+      });
+
+      const roleName = 'lambda-execution-role';
+      const roleArn = `arn:aws:iam::${accountId}:role/${roleName}`;
+
+      try {
+        console.log('🔐 Creating IAM role for Lambda...');
+        
+        const assumeRolePolicyDocument = {
+          Version: '2012-10-17',
+          Statement: [
+            {
+              Effect: 'Allow',
+              Principal: {
+                Service: 'lambda.amazonaws.com'
+              },
+              Action: 'sts:AssumeRole'
+            }
+          ]
+        };
+
+        await iam.createRole({
+          RoleName: roleName,
+          AssumeRolePolicyDocument: JSON.stringify(assumeRolePolicyDocument),
+          Description: 'Execution role for Remotion Lambda functions'
+        }).promise();
+
+        // Attach basic Lambda execution policy
+        await iam.attachRolePolicy({
+          RoleName: roleName,
+          PolicyArn: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        }).promise();
+
+        console.log('✅ IAM role created successfully');
+        
+        // Wait a bit for role to propagate
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+      } catch (roleError: any) {
+        if (roleError.code === 'EntityAlreadyExists') {
+          console.log('✅ IAM role already exists');
+        } else {
+          console.error('❌ IAM role creation error:', roleError);
+          throw roleError;
+        }
+      }
 
       // Create Lambda function
+      console.log('🚀 Creating Lambda function with role:', roleArn);
+      
       const lambdaParams = {
         FunctionName: functionName,
-        Runtime: 'nodejs18.x',
-        Role: `arn:aws:iam::${accountId}:role/lambda-execution-role`,
+        Runtime: 'nodejs18.x' as const,
+        Role: roleArn,
         Handler: 'index.handler',
         Code: {
           ZipFile: zipBuffer
         },
-        Description: 'Remotion video rendering function (SDK deployment)',
+        Description: 'Remotion video rendering function (SDK deployment v3)',
         Timeout: 300,
         MemorySize: 2048,
         Environment: {
@@ -145,6 +218,7 @@ exports.handler = async (event) => {
             ZipFile: zipBuffer
           }).promise();
         } else {
+          console.error('❌ Lambda function creation error:', lambdaError);
           throw lambdaError;
         }
       }
@@ -155,17 +229,19 @@ exports.handler = async (event) => {
         bucketName,
         functionName,
         region,
-        accountId
+        accountId,
+        roleArn
       };
 
       return NextResponse.json({
         success: true,
-        message: 'AWS Lambda deployed successfully via SDK!',
+        message: 'AWS Lambda deployed successfully via SDK v3!',
         deploymentInfo,
         environmentVariables: {
           REMOTION_AWS_BUCKET_NAME: bucketName,
           REMOTION_AWS_FUNCTION_NAME: functionName,
-          REMOTION_AWS_REGION: region
+          REMOTION_AWS_REGION: region,
+          REMOTION_AWS_ACCOUNT_ID: accountId
         },
         instructions: [
           'Copy the environment variables above',
@@ -181,7 +257,8 @@ exports.handler = async (event) => {
       return NextResponse.json({
         success: false,
         error: `AWS SDK error: ${awsError.message}`,
-        details: awsError.toString()
+        details: awsError.toString(),
+        code: awsError.code || 'Unknown'
       }, { status: 500 });
     }
 
@@ -198,10 +275,16 @@ exports.handler = async (event) => {
 
 export async function GET() {
   return NextResponse.json({
-    message: 'AWS Lambda deployment endpoint via SDK (v2)',
+    message: 'AWS Lambda deployment endpoint via SDK (v3 - Fixed credentials)',
     status: 'ready',
-    method: 'Pure AWS SDK (no CLI dependencies)',
-    version: '2.0',
+    method: 'Pure AWS SDK with explicit credentials',
+    version: '3.0',
+    fixes: [
+      'Explicit credentials for each service',
+      'Proper S3 region handling',
+      'IAM role creation',
+      'Better error handling'
+    ],
     requiredEnvVars: [
       'REMOTION_AWS_ACCESS_KEY_ID',
       'REMOTION_AWS_SECRET_ACCESS_KEY', 
