@@ -1,33 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
+  console.log('🚀 AWS Lambda render request received');
+  
   try {
-    console.log('🎬 Starting AWS Lambda render...');
-    
     const body = await request.json();
-    console.log('Render request:', body);
+    console.log('📝 Request body:', body);
 
-    // Check if AWS credentials and function name are available
-    const accessKeyId = process.env.REMOTION_AWS_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.REMOTION_AWS_SECRET_ACCESS_KEY;
-    const region = process.env.REMOTION_AWS_REGION || 'us-east-1';
-    const functionName = process.env.REMOTION_AWS_FUNCTION_NAME;
+    // Get AWS configuration from environment variables
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const functionName = process.env.AWS_LAMBDA_FUNCTION_NAME;
 
-    if (!accessKeyId || !secretAccessKey) {
-      return NextResponse.json({
-        success: false,
-        error: 'AWS credentials not found in environment variables'
-      }, { status: 400 });
+    console.log('🔧 AWS Configuration:', {
+      hasAccessKey: !!accessKeyId,
+      hasSecretKey: !!secretAccessKey,
+      region,
+      functionName
+    });
+
+    if (!accessKeyId || !secretAccessKey || !functionName) {
+      throw new Error('Missing AWS configuration. Please check environment variables.');
     }
-
-    if (!functionName) {
-      return NextResponse.json({
-        success: false,
-        error: 'AWS Lambda function name not found. Please deploy AWS Lambda first.'
-      }, { status: 400 });
-    }
-
-    console.log('✅ AWS credentials and function name found');
 
     // Import AWS SDK dynamically
     const AWS = await import('aws-sdk');
@@ -39,6 +34,7 @@ export async function POST(request: NextRequest) {
       region
     });
 
+    // Initialize AWS Lambda client
     const lambda = new AWS.Lambda();
 
     // Invoke Lambda function for rendering
@@ -67,29 +63,24 @@ export async function POST(request: NextRequest) {
         throw new Error('Lambda function returned empty or undefined payload');
       }
       
-      try {
-        const payload = JSON.parse(payloadString);
-        
-        if (!payload.body) {
-          throw new Error('Lambda response missing body field');
-        }
-        
-        const result = JSON.parse(payload.body);
-        
-        console.log('✅ Lambda render completed:', result);
-
-        return NextResponse.json({
-          success: result.success,
-          message: result.message,
-          videoUrl: result.videoUrl,
-          renderId: result.renderId,
-          renderType: 'aws-lambda',
-          timestamp: new Date().toISOString()
-        });
-      } catch (parseError) {
-        console.error('❌ Failed to parse Lambda response:', parseError);
-        throw new Error(`Failed to parse Lambda response: ${parseError.message}`);
+      const payload = JSON.parse(payloadString);
+      
+      if (!payload.body) {
+        throw new Error('Lambda response missing body field');
       }
+      
+      const result = JSON.parse(payload.body);
+      
+      console.log('✅ Lambda render completed:', result);
+      
+      return NextResponse.json({
+        success: result.success,
+        message: result.message,
+        videoUrl: result.videoUrl,
+        renderId: result.renderId,
+        renderType: 'aws-lambda',
+        timestamp: new Date().toISOString()
+      });
     } else {
       const errorMessage = lambdaResult.FunctionError 
         ? `Lambda function error: ${lambdaResult.FunctionError}`
@@ -102,9 +93,9 @@ export async function POST(request: NextRequest) {
     console.error('Error details:', {
       message: error.message,
       stack: error.stack,
-      functionName,
-      region,
-      hasCredentials: !!(accessKeyId && secretAccessKey)
+      functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      region: process.env.AWS_REGION,
+      hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
     });
     
     // Fallback to simple render if Lambda fails
@@ -145,9 +136,9 @@ export async function POST(request: NextRequest) {
           checkLambdaFunction: 'Verify AWS Lambda function exists and is deployed',
           checkCredentials: 'Verify AWS credentials in environment variables',
           checkPermissions: 'Verify IAM permissions for Lambda invocation',
-          functionName: functionName || 'NOT_SET',
-          region: region,
-          hasCredentials: !!(accessKeyId && secretAccessKey)
+          functionName: process.env.AWS_LAMBDA_FUNCTION_NAME || 'NOT_SET',
+          region: process.env.AWS_REGION,
+          hasCredentials: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)
         }
       }, { status: 500 });
     }
@@ -158,13 +149,7 @@ export async function GET() {
   return NextResponse.json({
     message: 'AWS Lambda render endpoint',
     status: 'ready',
-    description: 'Video render using AWS Lambda function',
-    requiredEnvVars: [
-      'REMOTION_AWS_ACCESS_KEY_ID',
-      'REMOTION_AWS_SECRET_ACCESS_KEY',
-      'REMOTION_AWS_REGION',
-      'REMOTION_AWS_FUNCTION_NAME'
-    ]
+    timestamp: new Date().toISOString()
   });
 }
 
