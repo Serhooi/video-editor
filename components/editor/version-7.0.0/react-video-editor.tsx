@@ -20,7 +20,7 @@ import { useHistory } from "./hooks/use-history";
 
 // Types
 import { Overlay } from "./types";
-import { useRendering } from "./hooks/use-rendering";
+import { useAWSRendering } from "./hooks/use-aws-rendering";
 import {
   AUTO_SAVE_INTERVAL,
   DEFAULT_OVERLAYS,
@@ -101,11 +101,7 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
     src: "",
   };
 
-  const { renderMedia, state } = useRendering(
-    "TestComponent",
-    inputProps,
-    RENDER_TYPE
-  );
+  const { renderVideo, state } = useAWSRendering();
 
   // Replace history management code with hook
   const { undo, redo, canUndo, canRedo } = useHistory(overlays, setOverlays);
@@ -218,7 +214,7 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
 
     // Add renderType to the context
     renderType: RENDER_TYPE,
-    renderMedia,
+    renderMedia: renderVideo,
     state,
 
     deleteOverlaysByRow,
