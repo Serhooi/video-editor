@@ -30,8 +30,20 @@ export const useAWSRendering = () => {
   const [state, setState] = useState<AWSState>({ status: "init" });
 
   const renderVideo = useCallback(
-    async (inputProps: z.infer<typeof CompositionProps>) => {
+    async (inputProps?: z.infer<typeof CompositionProps>) => {
+      console.log("🎬 RENDER VIDEO FUNCTION CALLED!");
       console.log("🎬 Starting AWS Lambda video render with props:", inputProps);
+      alert("🎬 RENDER VIDEO FUNCTION CALLED! Check console for details.");
+      
+      // If no props provided, use default props
+      if (!inputProps) {
+        console.log("🎬 No props provided, using default props");
+        inputProps = {
+          overlays: [],
+          aspectRatio: { width: 16, height: 9 },
+          durationInFrames: 60,
+        };
+      }
       
       setState({ status: "invoking" });
 
