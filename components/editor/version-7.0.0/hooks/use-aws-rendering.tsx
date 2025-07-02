@@ -31,6 +31,8 @@ export const useAWSRendering = () => {
 
   const renderVideo = useCallback(
     async (inputProps?: z.infer<typeof CompositionProps>) => {
+      console.log("🎬 RENDER VIDEO CALLED!");
+      
       // If no props provided, use default props
       if (!inputProps) {
         inputProps = {
