@@ -99,12 +99,58 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('❌ AWS Lambda render failed:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      functionName,
+      region,
+      hasCredentials: !!(accessKeyId && secretAccessKey)
+    });
     
-    return NextResponse.json({
-      success: false,
-      error: error.message,
-      details: 'AWS Lambda render process failed'
-    }, { status: 500 });
+    // Fallback to simple render if Lambda fails
+    console.log('🔄 Falling back to simple render...');
+    
+    try {
+      // Call simple render API as fallback
+      const simpleRenderResponse = await fetch(`${request.nextUrl.origin}/api/simple-render`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body)
+      });
+      
+      if (simpleRenderResponse.ok) {
+        const simpleResult = await simpleRenderResponse.json();
+        console.log('✅ Fallback simple render completed:', simpleResult);
+        
+        return NextResponse.json({
+          ...simpleResult,
+          renderType: 'simple-fallback',
+          fallbackReason: 'AWS Lambda failed',
+          originalError: error.message
+        });
+      } else {
+        throw new Error(`Simple render fallback also failed: ${simpleRenderResponse.status}`);
+      }
+    } catch (fallbackError: any) {
+      console.error('❌ Fallback render also failed:', fallbackError);
+      
+      return NextResponse.json({
+        success: false,
+        error: error.message,
+        fallbackError: fallbackError.message,
+        details: 'Both AWS Lambda and fallback render failed',
+        troubleshooting: {
+          checkLambdaFunction: 'Verify AWS Lambda function exists and is deployed',
+          checkCredentials: 'Verify AWS credentials in environment variables',
+          checkPermissions: 'Verify IAM permissions for Lambda invocation',
+          functionName: functionName || 'NOT_SET',
+          region: region,
+          hasCredentials: !!(accessKeyId && secretAccessKey)
+        }
+      }, { status: 500 });
+    }
   }
 }
 
