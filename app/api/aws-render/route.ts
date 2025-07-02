@@ -3,10 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function POST(request: NextRequest) {
   console.log('🚀 AWS Lambda render request received');
   
+  // Parse request body first (outside try block for fallback access)
+  const body = await request.json();
+  console.log('📝 Request body:', body);
+  
   try {
-    const body = await request.json();
-    console.log('📝 Request body:', body);
-
     // Get AWS configuration from environment variables
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
