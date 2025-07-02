@@ -54,22 +54,47 @@ export async function POST(request: NextRequest) {
 
     const lambdaResult = await lambda.invoke(lambdaParams).promise();
     
+    console.log('🔍 Lambda result:', {
+      StatusCode: lambdaResult.StatusCode,
+      Payload: lambdaResult.Payload?.toString(),
+      FunctionError: lambdaResult.FunctionError
+    });
+    
     if (lambdaResult.StatusCode === 200 && lambdaResult.Payload) {
-      const payload = JSON.parse(lambdaResult.Payload.toString());
-      const result = JSON.parse(payload.body);
+      const payloadString = lambdaResult.Payload.toString();
       
-      console.log('✅ Lambda render completed:', result);
+      if (!payloadString || payloadString === 'undefined' || payloadString.trim() === '') {
+        throw new Error('Lambda function returned empty or undefined payload');
+      }
+      
+      try {
+        const payload = JSON.parse(payloadString);
+        
+        if (!payload.body) {
+          throw new Error('Lambda response missing body field');
+        }
+        
+        const result = JSON.parse(payload.body);
+        
+        console.log('✅ Lambda render completed:', result);
 
-      return NextResponse.json({
-        success: result.success,
-        message: result.message,
-        videoUrl: result.videoUrl,
-        renderId: result.renderId,
-        renderType: 'aws-lambda',
-        timestamp: new Date().toISOString()
-      });
+        return NextResponse.json({
+          success: result.success,
+          message: result.message,
+          videoUrl: result.videoUrl,
+          renderId: result.renderId,
+          renderType: 'aws-lambda',
+          timestamp: new Date().toISOString()
+        });
+      } catch (parseError) {
+        console.error('❌ Failed to parse Lambda response:', parseError);
+        throw new Error(`Failed to parse Lambda response: ${parseError.message}`);
+      }
     } else {
-      throw new Error(`Lambda invocation failed with status: ${lambdaResult.StatusCode}`);
+      const errorMessage = lambdaResult.FunctionError 
+        ? `Lambda function error: ${lambdaResult.FunctionError}`
+        : `Lambda invocation failed with status: ${lambdaResult.StatusCode}`;
+      throw new Error(errorMessage);
     }
 
   } catch (error: any) {
