@@ -50,8 +50,18 @@ export function EditorHeader() {
    * - renderMedia: Function to handle media rendering/export
    * - state: Current editor state
    * - renderType: Type of render
+   * - Progress bar properties
    */
-  const { renderMedia, state, saveProject, renderType } = useEditorContext();
+  const { 
+    renderMedia, 
+    state, 
+    saveProject, 
+    renderType,
+    renderState,
+    onRenderComplete,
+    onRenderError,
+    closeProgress
+  } = useEditorContext();
 
   return (
     <header
@@ -90,6 +100,10 @@ export function EditorHeader() {
         state={state}
         saveProject={saveProject}
         renderType={renderType}
+        renderState={renderState}
+        onRenderComplete={onRenderComplete}
+        onRenderError={onRenderError}
+        closeProgress={closeProgress}
       />
     </header>
   );

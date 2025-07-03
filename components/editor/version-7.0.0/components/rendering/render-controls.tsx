@@ -7,6 +7,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { formatDistanceToNow } from "date-fns";
+import RenderProgressModal from "./render-progress-modal";
+import EnhancedRenderProgressModal from "./enhanced-render-progress-modal";
 
 /**
  * Interface representing a single video render attempt
@@ -30,12 +32,20 @@ interface RenderItem {
  * @property {() => void} handleRender - Function to trigger a new render
  * @property {() => void} saveProject - Function to save the project
  * @property {('ssr' | 'lambda')?} renderType - Type of render (SSR or Lambda)
+ * @property {object} renderState - Render progress state from useRenderProgress hook
+ * @property {(videoUrl: string) => void} onRenderComplete - Callback for render completion
+ * @property {(error: string) => void} onRenderError - Callback for render error
+ * @property {() => void} closeProgress - Function to close progress modal
  */
 interface RenderControlsProps {
   state: any;
   handleRender: () => void;
   saveProject?: () => Promise<void>;
   renderType?: "ssr" | "lambda";
+  renderState?: any;
+  onRenderComplete?: (videoUrl: string) => void;
+  onRenderError?: (error: string) => void;
+  closeProgress?: () => void;
 }
 
 /**
@@ -55,6 +65,10 @@ const RenderControls: React.FC<RenderControlsProps> = ({
   handleRender,
   saveProject,
   renderType = "ssr",
+  renderState,
+  onRenderComplete,
+  onRenderError,
+  closeProgress,
 }) => {
   // Store multiple renders
   const [renders, setRenders] = React.useState<RenderItem[]>([]);
@@ -224,6 +238,18 @@ const RenderControls: React.FC<RenderControlsProps> = ({
           `Render Video`
         )}
       </Button>
+
+      {/* Enhanced Render Progress Modal */}
+      {renderState && renderState.showProgress && renderState.renderId && renderState.bucketName && (
+        <EnhancedRenderProgressModal
+          isOpen={renderState.showProgress}
+          onClose={closeProgress || (() => {})}
+          renderId={renderState.renderId}
+          bucketName={renderState.bucketName}
+          onComplete={onRenderComplete || (() => {})}
+          onError={onRenderError || (() => {})}
+        />
+      )}
     </>
   );
 };

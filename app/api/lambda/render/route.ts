@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
       src: ''
     };
     
-    const composition = body.id || body.composition || "Main";
+    const composition = body.id || body.composition || "TestComponent";
     
     console.log('📊 Render parameters:', {
       composition,

@@ -101,7 +101,14 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
     src: "",
   };
 
-  const { renderVideo, state } = useAWSRendering();
+  const { 
+    renderVideo, 
+    state, 
+    renderState, 
+    onRenderComplete, 
+    onRenderError, 
+    closeProgress 
+  } = useAWSRendering();
 
   // Create render function with proper inputProps
   const renderMedia = useCallback(() => {
@@ -250,6 +257,12 @@ export default function ReactVideoEditor({ projectId }: { projectId: string }) {
 
     // Autosave
     saveProject: handleManualSave,
+
+    // Progress bar properties
+    renderState,
+    onRenderComplete,
+    onRenderError,
+    closeProgress,
   };
 
   return (

@@ -69,6 +69,12 @@ interface EditorContextProps {
 
   // Add renderType to the context
   renderType: "ssr" | "lambda";
+
+  // Progress bar properties
+  renderState?: any;
+  onRenderComplete?: (videoUrl: string) => void;
+  onRenderError?: (error: string) => void;
+  closeProgress?: () => void;
 }
 
 // Create the context with undefined as default value

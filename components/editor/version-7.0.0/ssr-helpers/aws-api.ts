@@ -35,8 +35,8 @@ export const renderMedia = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        id: "Main",
-        composition: "Main",
+        id: "TestComponent",
+        composition: "TestComponent",
         inputProps: compositionProps,
         compositionProps: compositionProps,
         timestamp: new Date().toISOString()
@@ -51,91 +51,14 @@ export const renderMedia = async (
     const result = await response.json();
     console.log("✅ Remotion Lambda render response:", result);
 
-    // If we have renderId and bucketName, start polling for progress
-    if (result.renderId && result.bucketName) {
-      console.log("🔄 Starting progress polling...");
-      return await pollRenderProgress(result.renderId, result.bucketName);
-    }
-
+    // Return the result immediately without polling
+    // The progress modal will handle polling
     return result;
   } catch (error: any) {
     console.error("❌ Remotion Lambda render failed:", error);
     throw new Error(`Remotion Lambda render failed: ${error.message}`);
   }
 };
-
-async function pollRenderProgress(renderId: string, bucketName: string): Promise<AWSRenderResponse> {
-  const maxAttempts = 120; // 10 minutes max (5 seconds * 120 = 600 seconds)
-  let attempts = 0;
-
-  console.log("📊 Starting progress polling for:", { renderId, bucketName });
-
-  while (attempts < maxAttempts) {
-    try {
-      const response = await fetch("/api/lambda/progress", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          renderId: renderId,
-          bucketName: bucketName,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Progress check failed: ${response.status}`);
-      }
-
-      const progressResult = await response.json();
-      console.log("📊 Render progress:", progressResult);
-
-      if (progressResult.success && progressResult.progress) {
-        const progress = progressResult.progress;
-        
-        // Check if render is complete
-        if (progress.type === "done") {
-          console.log("✅ Render completed successfully:", progress);
-          return {
-            success: true,
-            message: "Video rendered successfully!",
-            videoUrl: progress.outputFile || progress.url,
-            outputFile: progress.outputFile,
-            renderId: renderId,
-            bucketName: bucketName,
-            renderType: 'remotion-lambda',
-            timestamp: new Date().toISOString()
-          };
-        }
-        
-        // Check if render failed
-        if (progress.type === "error") {
-          throw new Error(progress.message || "Render failed");
-        }
-        
-        // Still in progress, continue polling
-        console.log(`🔄 Render in progress... (attempt ${attempts + 1}/${maxAttempts})`);
-      }
-
-      // Wait 5 seconds before next check
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      attempts++;
-    } catch (error) {
-      console.error("❌ Progress check error:", error);
-      attempts++;
-      
-      // If we're near the end, throw the error
-      if (attempts >= maxAttempts - 5) {
-        throw error;
-      }
-      
-      // Otherwise, wait and try again
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-  }
-
-  throw new Error("Render timeout - exceeded maximum wait time (10 minutes)");
-}
 
 export const getAWSProgress = async (renderId: string, bucketName?: string): Promise<AWSProgressResponse> => {
   try {
