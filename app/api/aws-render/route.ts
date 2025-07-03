@@ -120,6 +120,16 @@ export async function POST(request: NextRequest) {
     
     // Start async render (don't wait for completion)
     console.log('⚡ Starting async Remotion Lambda render...');
+    console.log('🔧 Lambda parameters:', {
+      codec: LAMBDA_CONFIG.CODEC,
+      functionName,
+      region,
+      serveUrl,
+      composition,
+      inputPropsKeys: Object.keys(inputProps),
+      framesPerLambda: LAMBDA_CONFIG.FRAMES_PER_LAMBDA,
+      maxRetries: LAMBDA_CONFIG.MAX_RETRIES
+    });
     
     // Start the render process asynchronously
     renderMediaOnLambda({
@@ -145,7 +155,16 @@ export async function POST(request: NextRequest) {
         cloudWatchLogs: result.cloudWatchLogs
       });
     }).catch((error) => {
-      console.error('❌ Async Remotion Lambda render failed:', error.message);
+      console.error('❌ Async Remotion Lambda render failed:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+        statusCode: error.statusCode,
+        functionName,
+        region,
+        serveUrl
+      });
     });
     
     // Return immediate response
