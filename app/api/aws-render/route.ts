@@ -118,8 +118,11 @@ export async function POST(request: NextRequest) {
       serveUrl
     });
     
-    // Call Remotion Lambda render
-    const result: RenderMediaOnLambdaOutput = await renderMediaOnLambda({
+    // Start async render (don't wait for completion)
+    console.log('⚡ Starting async Remotion Lambda render...');
+    
+    // Start the render process asynchronously
+    renderMediaOnLambda({
       codec: LAMBDA_CONFIG.CODEC,
       functionName,
       region,
@@ -134,25 +137,25 @@ export async function POST(request: NextRequest) {
       maxRetries: LAMBDA_CONFIG.MAX_RETRIES,
       everyNthFrame: 1,
       logLevel: 'verbose', // Enable verbose logging for debugging
+    }).then((result) => {
+      console.log('✅ Async Remotion Lambda render completed:', {
+        renderId: result.renderId,
+        bucketName: result.bucketName,
+        outputFile: result.outputFile,
+        cloudWatchLogs: result.cloudWatchLogs
+      });
+    }).catch((error) => {
+      console.error('❌ Async Remotion Lambda render failed:', error.message);
     });
     
-    console.log('✅ Remotion Lambda render completed:', {
-      renderId: result.renderId,
-      bucketName: result.bucketName,
-      outputFile: result.outputFile,
-      cloudWatchLogs: result.cloudWatchLogs
-    });
-    
+    // Return immediate response
     return NextResponse.json({
       success: true,
-      message: 'Remotion Lambda render completed successfully',
-      renderId: result.renderId,
-      bucketName: result.bucketName,
-      outputFile: result.outputFile,
-      cloudWatchLogs: result.cloudWatchLogs,
-      renderType: 'remotion-lambda',
+      message: 'Render started successfully!',
+      status: 'processing',
+      renderType: 'remotion-lambda-async',
       timestamp: new Date().toISOString(),
-      result
+      note: 'Render is processing asynchronously. Check back in a few minutes.'
     });
     
   } catch (error: any) {
