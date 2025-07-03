@@ -65,7 +65,7 @@ export const renderMedia = async (
 };
 
 async function pollRenderProgress(renderId: string, bucketName: string): Promise<AWSRenderResponse> {
-  const maxAttempts = 60; // 5 minutes max (5 seconds * 60 = 300 seconds)
+  const maxAttempts = 120; // 10 minutes max (5 seconds * 120 = 600 seconds)
   let attempts = 0;
 
   console.log("📊 Starting progress polling for:", { renderId, bucketName });
@@ -134,7 +134,7 @@ async function pollRenderProgress(renderId: string, bucketName: string): Promise
     }
   }
 
-  throw new Error("Render timeout - exceeded maximum wait time (5 minutes)");
+  throw new Error("Render timeout - exceeded maximum wait time (10 minutes)");
 }
 
 export const getAWSProgress = async (renderId: string, bucketName?: string): Promise<AWSProgressResponse> => {

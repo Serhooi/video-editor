@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       composition,
       inputProps,
       framesPerLambda: 100,
+      timeoutInMilliseconds: 600000, // 10 minutes timeout for delayRender() calls
       downloadBehavior: {
         type: "download",
         fileName: "video.mp4",
