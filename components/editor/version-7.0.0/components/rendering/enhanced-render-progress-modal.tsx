@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, AlertCircle, CheckCircle, Clock, Zap, Film } from 'lucide-react';
 
 interface EnhancedRenderProgressModalProps {
@@ -222,12 +223,17 @@ export const EnhancedRenderProgressModal: React.FC<EnhancedRenderProgressModalPr
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen) {
+    console.log('🚫 Modal not open. isOpen:', isOpen);
+    return null;
+  }
+
+  console.log('✅ Modal should be open! isOpen:', isOpen);
 
   const progressPercentage = getProgressPercentage();
 
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+  const modalContent = (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-auto overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4 text-white">
@@ -374,6 +380,9 @@ export const EnhancedRenderProgressModal: React.FC<EnhancedRenderProgressModalPr
       </div>
     </div>
   );
+
+  // Render modal in a portal to avoid overflow issues
+  return typeof window !== 'undefined' ? createPortal(modalContent, document.body) : null;
 };
 
 export default EnhancedRenderProgressModal;
