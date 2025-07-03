@@ -79,12 +79,28 @@ export async function POST(request: NextRequest) {
       throw new Error('Missing REMOTION_SERVE_URL or SITE_NAME environment variable');
     }
     
-    // Prepare input props - use default values if not provided
-    const inputProps = body.inputProps || {
-      overlays: [],
-      aspectRatio: { width: 16, height: 9 },
-      durationInFrames: 60,
-    };
+    // Prepare input props - handle both formats
+    let inputProps;
+    
+    // Check if data comes as compositionProps (from frontend)
+    if (body.compositionProps) {
+      inputProps = body.compositionProps;
+      console.log('📊 Using compositionProps from request body');
+    } 
+    // Check if data comes as inputProps (legacy format)
+    else if (body.inputProps) {
+      inputProps = body.inputProps;
+      console.log('📊 Using inputProps from request body');
+    }
+    // Use default values if no props provided
+    else {
+      inputProps = {
+        overlays: [],
+        aspectRatio: { width: 16, height: 9 },
+        durationInFrames: 60,
+      };
+      console.log('📊 Using default inputProps');
+    }
     
     const composition = body.id || body.composition || "Main";
     

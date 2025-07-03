@@ -26,7 +26,6 @@ export const renderMedia = async (
   compositionProps: z.infer<typeof CompositionProps>
 ): Promise<AWSRenderResponse> => {
   console.log("🎬 AWS LAMBDA RENDER MEDIA FUNCTION CALLED!");
-  alert("🎬 AWS LAMBDA RENDER STARTING!");
   
   try {
     console.log("📝 Sending AWS Lambda render request with props:", compositionProps);
