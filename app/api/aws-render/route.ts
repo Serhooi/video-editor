@@ -57,7 +57,16 @@ export async function POST(request: NextRequest) {
     // Get configuration from environment variables (prioritize REMOTION_ prefix)
     const region = (process.env.REMOTION_AWS_REGION || process.env.AWS_REGION || 'us-east-1') as AwsRegion;
     const functionName = process.env.REMOTION_LAMBDA_FUNCTION_NAME || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    const serveUrl = process.env.REMOTION_SERVE_URL || process.env.SITE_NAME;
+    
+    // Auto-generate serveUrl if not provided
+    let serveUrl = process.env.REMOTION_SERVE_URL || process.env.SITE_NAME;
+    if (!serveUrl) {
+      // Generate serveUrl from current request URL
+      const protocol = request.nextUrl.protocol;
+      const host = request.nextUrl.host;
+      serveUrl = `${protocol}//${host}`;
+      console.log('🔧 Auto-generated serveUrl:', serveUrl);
+    }
     
     console.log('🔧 Remotion Lambda Configuration:', {
       region,
@@ -73,10 +82,6 @@ export async function POST(request: NextRequest) {
     
     if (!functionName) {
       throw new Error('Missing REMOTION_LAMBDA_FUNCTION_NAME or AWS_LAMBDA_FUNCTION_NAME environment variable');
-    }
-    
-    if (!serveUrl) {
-      throw new Error('Missing REMOTION_SERVE_URL or SITE_NAME environment variable');
     }
     
     // Prepare input props - handle both formats
